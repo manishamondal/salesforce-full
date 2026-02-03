@@ -15,7 +15,7 @@ pipeline {
 
         choice(
             name: 'DEPLOY_SCOPE',
-            choices: ['FULL', 'DELTA'],
+            choices: ['FULL'],
             description: 'Deployment scope'
         )
 
@@ -23,12 +23,6 @@ pipeline {
             name: 'TEST_LEVEL',
             choices: ['NoTestRun', 'RunLocalTests'],
             description: 'Salesforce test level'
-        )
-
-        string(
-            name: 'DELTA_BASELINE',
-            defaultValue: 'origin/main',
-            description: 'Git ref for delta baseline'
         )
 
         string(
@@ -182,7 +176,7 @@ pipeline {
                     file(credentialsId: 'sfdx_jwt_key', variable: 'JWT_KEY_FILE'),
                     string(credentialsId: 'sfdx_client_id', variable: 'CLIENT_ID')
                 ]) {
-                    sh """
+                    sh '''
                     "$SF" org login jwt \
                       --client-id "$CLIENT_ID" \
                       --jwt-key-file "$JWT_KEY_FILE" \
@@ -190,7 +184,7 @@ pipeline {
                       --instance-url "$INSTANCE_URL" \
                       --alias "$SF_ALIAS" \
                       --set-default
-                    """
+                    '''
                 }
             }
         }
@@ -208,45 +202,6 @@ pipeline {
         // }
 
         /* ---------------------------------------------------------
-           Validate Delta Baseline
-           --------------------------------------------------------- */
-        stage('Validate Delta Baseline') {
-            when {
-                expression { params.DEPLOY_SCOPE == 'DELTA' }
-            }
-            steps {
-                sh """
-                echo "Validating baseline: ${DELTA_BASELINE}"
-                git rev-parse --verify ${DELTA_BASELINE}
-                """
-            }
-        }
-
-        /* ---------------------------------------------------------
-           Generate Delta
-           --------------------------------------------------------- */
-        stage('Generate Delta') {
-            when {
-                expression {
-                    params.DEPLOY_SCOPE == 'DELTA' &&
-                    params.APEX_CLASSES.trim() == ''
-                }
-            }
-            steps {
-                sh """
-                rm -rf "$DELTA_DIR"
-                mkdir -p "$DELTA_DIR"
-
-                "$SF" sgd:source:delta \
-                  --from ${DELTA_BASELINE} \
-                  --to HEAD \
-                  --output "$DELTA_DIR" \
-                  --generate-delta
-                """
-            }
-        }
-
-        /* ---------------------------------------------------------
            Static Code Analysis (ALL Deployments)
            --------------------------------------------------------- */
         stage('Static Code Analysis') {
@@ -256,8 +211,6 @@ pipeline {
                     
                     if (params.APEX_CLASSES.trim()) {
                         scanDir = 'force-app/main/default/classes'
-                    } else if (params.DEPLOY_SCOPE == 'DELTA') {
-                        scanDir = env.DELTA_DIR
                     }
                     
                     sh """
@@ -361,19 +314,15 @@ pipeline {
                         def classPaths = params.APEX_CLASSES
                             .split(',')
                             .collect { it.trim() }
-                            .collect {
-                                "force-app/main/default/classes/${it}.cls," +
-                                "force-app/main/default/classes/${it}.cls-meta.xml"
-                            }
+                            .collect { "force-app/main/default/classes/${it}.cls" }
                             .join(',')
 
                         sh """
                         rm -rf .sf .sfdx
-                        "$SF" deploy metadata \
+                        "$SF" project deploy start \
                           --source-dir ${classPaths} \
                           --target-org "$SF_ALIAS" \
                           --test-level "$TEST_LEVEL" \
-                          --ignore-conflicts \
                           --dry-run \
                           --wait 60
                         """
@@ -383,7 +332,7 @@ pipeline {
                     if (params.DEPLOY_FORMAT == 'MDAPI') {
                         sh """
                         rm -rf .sf .sfdx
-                        "$SF" deploy metadata \
+                        "$SF" project deploy start \
                           --manifest ${params.PACKAGE_XML_PATH} \
                           --target-org "$SF_ALIAS" \
                           --test-level "$TEST_LEVEL" \
@@ -393,27 +342,16 @@ pipeline {
                         return
                     }
 
-                    if (params.DEPLOY_SCOPE == 'DELTA') {
-                        sh """
-                        rm -rf .sf .sfdx
-                        "$SF" deploy metadata \
-                          --source-dir "$DELTA_DIR" \
-                          --target-org "$SF_ALIAS" \
-                          --test-level "$TEST_LEVEL" \
-                          --dry-run \
-                          --wait 60
-                        """
-                    } else {
-                        sh """
-                        rm -rf .sf .sfdx
-                        "$SF" deploy metadata \
-                          --source-dir force-app \
-                          --target-org "$SF_ALIAS" \
-                          --test-level "$TEST_LEVEL" \
-                          --dry-run \
-                          --wait 60
-                        """
-                    }
+                    // FULL deployment only
+                    sh """
+                    rm -rf .sf .sfdx
+                    "$SF" project deploy start \
+                      --source-dir force-app \
+                      --target-org "$SF_ALIAS" \
+                      --test-level "$TEST_LEVEL" \
+                      --dry-run \
+                      --wait 60
+                    """
                     
                     def duration = System.currentTimeMillis() - startTime
                     echo "✅ Validation completed in ${duration}ms"
@@ -454,7 +392,6 @@ Dry-run validation successful.
 Deployment details:
 - Format : ${params.DEPLOY_FORMAT}
 - Scope  : ${params.DEPLOY_SCOPE}
-- Baseline : ${params.DELTA_BASELINE}
 - Apex-only : ${params.APEX_CLASSES ?: 'No'}
 
 Approve deployment?
@@ -483,15 +420,12 @@ Approve deployment?
                         def classPaths = params.APEX_CLASSES
                             .split(',')
                             .collect { it.trim() }
-                            .collect {
-                                "force-app/main/default/classes/${it}.cls," +
-                                "force-app/main/default/classes/${it}.cls-meta.xml"
-                            }
+                            .collect { "force-app/main/default/classes/${it}.cls" }
                             .join(',')
 
                         sh """
                         rm -rf .sf .sfdx
-                        "$SF" deploy metadata \
+                        "$SF" project deploy start \
                           --source-dir ${classPaths} \
                           --target-org "$SF_ALIAS" \
                           --test-level "$TEST_LEVEL" \
@@ -503,7 +437,7 @@ Approve deployment?
                     if (params.DEPLOY_FORMAT == 'MDAPI') {
                         sh """
                         rm -rf .sf .sfdx
-                        "$SF" deploy metadata \
+                        "$SF" project deploy start \
                           --manifest ${params.PACKAGE_XML_PATH} \
                           --target-org "$SF_ALIAS" \
                           --test-level "$TEST_LEVEL" \
@@ -512,25 +446,15 @@ Approve deployment?
                         return
                     }
 
-                    if (params.DEPLOY_SCOPE == 'DELTA') {
-                        sh """
-                        rm -rf .sf .sfdx
-                        "$SF" deploy metadata \
-                          --source-dir "$DELTA_DIR" \
-                          --target-org "$SF_ALIAS" \
-                          --test-level "$TEST_LEVEL" \
-                          --wait 60
-                        """
-                    } else {
-                        sh """
-                        rm -rf .sf .sfdx
-                        "$SF" deploy metadata \
-                          --source-dir force-app \
-                          --target-org "$SF_ALIAS" \
-                          --test-level "$TEST_LEVEL" \
-                          --wait 60
-                        """
-                    }
+                    // FULL deployment only
+                    sh """
+                    rm -rf .sf .sfdx
+                    "$SF" project deploy start \
+                      --source-dir force-app \
+                      --target-org "$SF_ALIAS" \
+                      --test-level "$TEST_LEVEL" \
+                      --wait 60
+                    """
                     
                     // Capture deployment ID for rollback readiness
                     def deploymentOutput = sh(
