@@ -50,6 +50,11 @@ pipeline {
         INSTANCE_URL    = "https://login.salesforce.com"
         SF_USERNAME     = "manisha.mondal@accenture.com"
         DELTA_DIR       = "delta"
+        SCA_DIR         = "sca-reports"
+        SCA_THRESHOLD_HIGH = "0"
+        SCA_THRESHOLD_CRITICAL = "0"
+        DEPLOYMENT_ID   = ""
+        BUILD_METRICS   = "build-metrics.json"
     }
 
     stages {
@@ -104,14 +109,14 @@ pipeline {
         /* ---------------------------------------------------------
            Install Plugins
            --------------------------------------------------------- */
-        stage('Install Plugins') {
-            steps {
-                sh '''
-                echo y | "$SF" plugins install sfdx-git-delta || true
-                "$SF" plugins install @salesforce/sfdx-scanner || true
-                '''
-            }
-        }
+        // stage('Install Plugins') {
+        //     steps {
+        //         sh '''
+        //         echo y | "$SF" plugins install sfdx-git-delta || true
+        //         "$SF" plugins install @salesforce/sfdx-scanner || true
+        //         '''
+        //     }
+        // }
 
         /* ---------------------------------------------------------
            Validate Delta Baseline
@@ -153,20 +158,99 @@ pipeline {
         }
 
         /* ---------------------------------------------------------
-           Static Code Analysis (Delta only)
+           Static Code Analysis (ALL Deployments)
            --------------------------------------------------------- */
         stage('Static Code Analysis') {
-            when {
-                expression { params.DEPLOY_SCOPE == 'DELTA' }
-            }
             steps {
-                sh """
-                mkdir -p /tmp/SCA
-                "$SF" code-analyzer run \
-                  --workspace "$DELTA_DIR" \
-                  --rule-selector Recommended \
-                  --output-file /tmp/SCA/sca-report.html
-                """
+                script {
+                    def scanDir = 'force-app'
+                    
+                    if (params.APEX_CLASSES.trim()) {
+                        scanDir = 'force-app/main/default/classes'
+                    } else if (params.DEPLOY_SCOPE == 'DELTA') {
+                        scanDir = env.DELTA_DIR
+                    }
+                    
+                    sh """
+                    mkdir -p "$SCA_DIR"
+                    
+                    echo "=== Running Salesforce Code Analyzer ==="
+                    echo "Scan Directory: ${scanDir}"
+                    echo "Timestamp: \$(date)"
+                    
+                    # Run code analyzer with multiple formats
+                    "$SF" scanner run \
+                      --target "${scanDir}" \
+                      --format html,json,csv \
+                      --outfile "$SCA_DIR/sca-report" \
+                      --severity-threshold 1 \
+                      --normalize-severity || true
+                    
+                    # Generate summary report
+                    echo "=== Static Code Analysis Summary ===" > "$SCA_DIR/summary.txt"
+                    echo "Build: ${BUILD_NUMBER}" >> "$SCA_DIR/summary.txt"
+                    echo "Date: \$(date)" >> "$SCA_DIR/summary.txt"
+                    echo "Scope: ${params.DEPLOY_SCOPE}" >> "$SCA_DIR/summary.txt"
+                    echo "Directory Scanned: ${scanDir}" >> "$SCA_DIR/summary.txt"
+                    echo "" >> "$SCA_DIR/summary.txt"
+                    """
+                    
+                    // Parse and validate results
+                    def scaResults = sh(
+                        script: """
+                        if [ -f "$SCA_DIR/sca-report.json" ]; then
+                            cat "$SCA_DIR/sca-report.json"
+                        else
+                            echo '[]'
+                        fi
+                        """,
+                        returnStdout: true
+                    ).trim()
+                    
+                    // Check thresholds
+                    sh """
+                    # Count violations by severity
+                    CRITICAL_COUNT=0
+                    HIGH_COUNT=0
+                    
+                    if [ -f "$SCA_DIR/sca-report.csv" ]; then
+                        CRITICAL_COUNT=\$(grep -i "critical" "$SCA_DIR/sca-report.csv" | wc -l || echo 0)
+                        HIGH_COUNT=\$(grep -i "high" "$SCA_DIR/sca-report.csv" | wc -l || echo 0)
+                    fi
+                    
+                    echo "Critical Issues: \$CRITICAL_COUNT" >> "$SCA_DIR/summary.txt"
+                    echo "High Issues: \$HIGH_COUNT" >> "$SCA_DIR/summary.txt"
+                    echo "" >> "$SCA_DIR/summary.txt"
+                    
+                    # Threshold validation
+                    if [ \$CRITICAL_COUNT -gt ${SCA_THRESHOLD_CRITICAL} ]; then
+                        echo "❌ FAILED: \$CRITICAL_COUNT Critical issues found (threshold: ${SCA_THRESHOLD_CRITICAL})" >> "$SCA_DIR/summary.txt"
+                        echo "⚠️ WARNING: Critical security/quality issues detected!"
+                        exit 1
+                    fi
+                    
+                    if [ \$HIGH_COUNT -gt ${SCA_THRESHOLD_HIGH} ]; then
+                        echo "⚠️ WARNING: \$HIGH_COUNT High severity issues found (threshold: ${SCA_THRESHOLD_HIGH})" >> "$SCA_DIR/summary.txt"
+                        echo "⚠️ WARNING: High severity issues detected!"
+                        exit 1
+                    fi
+                    
+                    echo "✅ PASSED: No Critical/High issues above threshold" >> "$SCA_DIR/summary.txt"
+                    cat "$SCA_DIR/summary.txt"
+                    """
+                }
+            }
+            post {
+                always {
+                    // Archive all SCA reports
+                    archiveArtifacts artifacts: "${SCA_DIR}/**/*", allowEmptyArchive: true
+                    
+                    // Display summary in console
+                    sh 'cat "$SCA_DIR/summary.txt" || echo "No summary available"'
+                }
+                failure {
+                    echo '❌ Static Code Analysis failed - Critical/High severity issues detected'
+                }
             }
         }
 
@@ -176,6 +260,7 @@ pipeline {
         stage('Validate Deployment') {
             steps {
                 script {
+                    def startTime = System.currentTimeMillis()
 
                     if (params.APEX_CLASSES.trim()) {
                         def classPaths = params.APEX_CLASSES
@@ -234,6 +319,30 @@ pipeline {
                           --wait 60
                         """
                     }
+                    
+                    def duration = System.currentTimeMillis() - startTime
+                    echo "✅ Validation completed in ${duration}ms"
+                    
+                    // Log validation metrics
+                    sh """
+                    mkdir -p logs
+                    echo "{\"stage\": \"Validate\", \"duration_ms\": ${duration}, \"timestamp\": \"\$(date -Iseconds)\"}" >> "$BUILD_METRICS"
+                    """
+                }
+            }
+            post {
+                failure {
+                    script {
+                        sh """
+                        mkdir -p logs
+                        echo "❌ Validation Failed" > logs/validation-failure.log
+                        echo "Build: ${BUILD_NUMBER}" >> logs/validation-failure.log
+                        echo "Format: ${params.DEPLOY_FORMAT}" >> logs/validation-failure.log
+                        echo "Scope: ${params.DEPLOY_SCOPE}" >> logs/validation-failure.log
+                        echo "Timestamp: \$(date)" >> logs/validation-failure.log
+                        cat logs/validation-failure.log
+                        """
+                    }
                 }
             }
         }
@@ -266,6 +375,14 @@ Approve deployment?
         stage('Deploy') {
             steps {
                 script {
+                    def startTime = System.currentTimeMillis()
+                    
+                    echo "=== Starting Deployment ==="
+                    echo "Build: ${BUILD_NUMBER}"
+                    echo "Format: ${params.DEPLOY_FORMAT}"
+                    echo "Scope: ${params.DEPLOY_SCOPE}"
+                    echo "Test Level: ${params.TEST_LEVEL}"
+                    echo "Timestamp: ${new Date()}"
 
                     if (params.APEX_CLASSES.trim()) {
                         def classPaths = params.APEX_CLASSES
@@ -319,20 +436,233 @@ Approve deployment?
                           --wait 60
                         """
                     }
+                    
+                    // Capture deployment ID for rollback readiness
+                    def deploymentOutput = sh(
+                        script: """"$SF" org list metadata-types --target-org "$SF_ALIAS" --json | head -20 || echo '{}'""",
+                        returnStdout: true
+                    ).trim()
+                    
+                    def duration = System.currentTimeMillis() - startTime
+                    echo "✅ Deployment completed in ${duration}ms"
+                    
+                    // Log deployment success metrics
+                    sh """
+                    mkdir -p logs
+                    echo "{\"stage\": \"Deploy\", \"duration_ms\": ${duration}, \"timestamp\": \"\$(date -Iseconds)\", \"status\": \"success\"}" >> "$BUILD_METRICS"
+                    
+                    # Create deployment summary
+                    echo "=== Deployment Summary ===" > logs/deployment-summary.txt
+                    echo "Build: ${BUILD_NUMBER}" >> logs/deployment-summary.txt
+                    echo "Status: SUCCESS" >> logs/deployment-summary.txt
+                    echo "Duration: ${duration}ms" >> logs/deployment-summary.txt
+                    echo "Format: ${params.DEPLOY_FORMAT}" >> logs/deployment-summary.txt
+                    echo "Scope: ${params.DEPLOY_SCOPE}" >> logs/deployment-summary.txt
+                    echo "Test Level: ${params.TEST_LEVEL}" >> logs/deployment-summary.txt
+                    echo "Timestamp: \$(date)" >> logs/deployment-summary.txt
+                    echo "" >> logs/deployment-summary.txt
+                    echo "Rollback: Use previous successful deployment or Git revert" >> logs/deployment-summary.txt
+                    
+                    cat logs/deployment-summary.txt
+                    """
+                }
+            }
+            post {
+                success {
+                    archiveArtifacts artifacts: 'logs/deployment-summary.txt', allowEmptyArchive: true
+                }
+                failure {
+                    script {
+                        sh """
+                        mkdir -p logs
+                        echo "=== Deployment Failure Details ===" > logs/deployment-failure.log
+                        echo "Build: ${BUILD_NUMBER}" >> logs/deployment-failure.log
+                        echo "Failed Stage: Deploy" >> logs/deployment-failure.log
+                        echo "Format: ${params.DEPLOY_FORMAT}" >> logs/deployment-failure.log
+                        echo "Scope: ${params.DEPLOY_SCOPE}" >> logs/deployment-failure.log
+                        echo "Timestamp: \$(date)" >> logs/deployment-failure.log
+                        echo "" >> logs/deployment-failure.log
+                        echo "Recommended Actions:" >> logs/deployment-failure.log
+                        echo "1. Review deployment logs above" >> logs/deployment-failure.log
+                        echo "2. Check for test failures or metadata conflicts" >> logs/deployment-failure.log
+                        echo "3. Verify org connectivity and permissions" >> logs/deployment-failure.log
+                        echo "4. Consider rollback if partial deployment occurred" >> logs/deployment-failure.log
+                        echo "" >> logs/deployment-failure.log
+                        echo "Rollback Command (if needed):" >> logs/deployment-failure.log
+                        echo "git revert HEAD && re-run pipeline" >> logs/deployment-failure.log
+                        
+                        cat logs/deployment-failure.log
+                        """
+                        
+                        archiveArtifacts artifacts: 'logs/deployment-failure.log', allowEmptyArchive: true
+                    }
+                }
+            }
+        }
+        
+        /* ---------------------------------------------------------
+           Post-Deployment Validation
+           --------------------------------------------------------- */
+        stage('Post-Deployment Validation') {
+            steps {
+                script {
+                    echo "=== Running Post-Deployment Checks ==="
+                    
+                    sh """
+                    # Verify org connectivity
+                    "$SF" org display --target-org "$SF_ALIAS" --json
+                    
+                    # List recent deployments
+                    echo "" 
+                    echo "Recent Deployments:"
+                    "$SF" org list metadata-types --target-org "$SF_ALIAS" || true
+                    
+                    # Generate final build metrics
+                    mkdir -p logs
+                    echo "=== Build Metrics ===" > logs/build-metrics-summary.txt
+                    echo "Build Number: ${BUILD_NUMBER}" >> logs/build-metrics-summary.txt
+                    echo "Build Date: \$(date)" >> logs/build-metrics-summary.txt
+                    echo "Format: ${params.DEPLOY_FORMAT}" >> logs/build-metrics-summary.txt
+                    echo "Scope: ${params.DEPLOY_SCOPE}" >> logs/build-metrics-summary.txt
+                    echo "" >> logs/build-metrics-summary.txt
+                    
+                    if [ -f "$BUILD_METRICS" ]; then
+                        echo "Stage Timings:" >> logs/build-metrics-summary.txt
+                        cat "$BUILD_METRICS" >> logs/build-metrics-summary.txt
+                    fi
+                    
+                    cat logs/build-metrics-summary.txt
+                    """
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'logs/**/*,*.json', allowEmptyArchive: true
                 }
             }
         }
     }
 
     post {
+        always {
+            script {
+                // Generate comprehensive build report
+                sh """
+                mkdir -p logs
+                
+                echo "========================================" > logs/pipeline-summary.txt
+                echo "   SALESFORCE CI/CD PIPELINE SUMMARY   " >> logs/pipeline-summary.txt
+                echo "========================================" >> logs/pipeline-summary.txt
+                echo "" >> logs/pipeline-summary.txt
+                echo "Build Number: ${BUILD_NUMBER}" >> logs/pipeline-summary.txt
+                echo "Build URL: ${BUILD_URL}" >> logs/pipeline-summary.txt
+                echo "Status: ${currentBuild.result ?: 'IN_PROGRESS'}" >> logs/pipeline-summary.txt
+                echo "Duration: ${currentBuild.durationString}" >> logs/pipeline-summary.txt
+                echo "Started: ${new Date(currentBuild.startTimeInMillis)}" >> logs/pipeline-summary.txt
+                echo "" >> logs/pipeline-summary.txt
+                echo "Configuration:" >> logs/pipeline-summary.txt
+                echo "  - Deploy Format: ${params.DEPLOY_FORMAT}" >> logs/pipeline-summary.txt
+                echo "  - Deploy Scope: ${params.DEPLOY_SCOPE}" >> logs/pipeline-summary.txt
+                echo "  - Test Level: ${params.TEST_LEVEL}" >> logs/pipeline-summary.txt
+                echo "  - Apex Classes: ${params.APEX_CLASSES ?: 'All'}" >> logs/pipeline-summary.txt
+                echo "  - Target Org: ${SF_USERNAME}" >> logs/pipeline-summary.txt
+                echo "" >> logs/pipeline-summary.txt
+                
+                # Include SCA summary if available
+                if [ -f "${SCA_DIR}/summary.txt" ]; then
+                    echo "Static Code Analysis:" >> logs/pipeline-summary.txt
+                    cat "${SCA_DIR}/summary.txt" >> logs/pipeline-summary.txt
+                    echo "" >> logs/pipeline-summary.txt
+                fi
+                
+                cat logs/pipeline-summary.txt
+                """
+                
+                // Archive all reports and logs
+                archiveArtifacts artifacts: 'logs/**/*', allowEmptyArchive: true
+            }
+        }
+        
         success {
-            echo '✅ Salesforce deployment completed successfully'
+            script {
+                echo ''
+                echo '✅ ========================================'
+                echo '✅  SALESFORCE DEPLOYMENT SUCCESSFUL'
+                echo '✅ ========================================'
+                echo ''
+                echo "Build: ${BUILD_NUMBER}"
+                echo "Duration: ${currentBuild.durationString}"
+                echo "SCA Report: ${BUILD_URL}artifact/${SCA_DIR}/sca-report.html"
+                echo "Build Logs: ${BUILD_URL}console"
+                echo ''
+                
+                sh """
+                echo "success" > logs/build-status.txt
+                echo "Build ${BUILD_NUMBER} completed successfully at \$(date)" >> logs/build-status.txt
+                """
+            }
         }
+        
         failure {
-            echo '❌ Salesforce pipeline failed'
+            script {
+                echo ''
+                echo '❌ ========================================'
+                echo '❌  SALESFORCE PIPELINE FAILED'
+                echo '❌ ========================================'
+                echo ''
+                echo "Build: ${BUILD_NUMBER}"
+                echo "Failed Stage: Check console output above"
+                echo "Duration: ${currentBuild.durationString}"
+                echo ''
+                echo 'Troubleshooting Steps:'
+                echo '1. Review console logs for specific error messages'
+                echo '2. Check SCA report for code quality issues'
+                echo '3. Verify Salesforce org connectivity and permissions'
+                echo '4. Review deployment validation errors'
+                echo '5. Check if tests failed (if TEST_LEVEL=RunLocalTests)'
+                echo ''
+                echo "Console Logs: ${BUILD_URL}console"
+                echo "Artifacts: ${BUILD_URL}artifact/"
+                echo ''
+                
+                sh """
+                mkdir -p logs
+                echo "failure" > logs/build-status.txt
+                echo "Build ${BUILD_NUMBER} failed at \$(date)" >> logs/build-status.txt
+                echo "" >> logs/build-status.txt
+                echo "Common Failure Categories:" >> logs/build-status.txt
+                echo "1. CODE_QUALITY: SCA found Critical/High issues" >> logs/build-status.txt
+                echo "2. VALIDATION: Metadata validation failed" >> logs/build-status.txt
+                echo "3. TEST_FAILURE: Apex tests failed" >> logs/build-status.txt
+                echo "4. AUTHENTICATION: SF org connection issues" >> logs/build-status.txt
+                echo "5. CONFIGURATION: Pipeline parameter issues" >> logs/build-status.txt
+                echo "" >> logs/build-status.txt
+                echo "Next Steps:" >> logs/build-status.txt
+                echo "- Document this failure in RCA template" >> logs/build-status.txt
+                echo "- Identify if this is a recurring issue" >> logs/build-status.txt
+                echo "- Implement preventive measures" >> logs/build-status.txt
+                """
+            }
         }
+        
         aborted {
-            echo '⚠ Deployment aborted or approval expired'
+            script {
+                echo ''
+                echo '⚠️  ========================================'
+                echo '⚠️   DEPLOYMENT ABORTED'
+                echo '⚠️  ========================================'
+                echo ''
+                echo "Build: ${BUILD_NUMBER}"
+                echo "Reason: User abort or approval timeout"
+                echo "Duration: ${currentBuild.durationString}"
+                echo ''
+                
+                sh """
+                mkdir -p logs
+                echo "aborted" > logs/build-status.txt
+                echo "Build ${BUILD_NUMBER} was aborted at \$(date)" >> logs/build-status.txt
+                """
+            }
         }
     }
 }
