@@ -46,7 +46,7 @@ pipeline {
 
     environment {
         SF              = "/c/Program Files/sf/bin/sf"
-        SF_ALIAS        = "CICD_QAHub"
+        SF_ALIAS        = "CICD_DevHub"
         INSTANCE_URL    = "https://login.salesforce.com"
         SF_USERNAME     = "manisha.mondal@accenture.com"
         DELTA_DIR       = "delta"
@@ -55,6 +55,8 @@ pipeline {
         SCA_THRESHOLD_CRITICAL = "0"
         DEPLOYMENT_ID   = ""
         BUILD_METRICS   = "build-metrics.json"
+        CLEAN_BUILD_STREAK = "0"
+        PREVIOUS_BUILD_CLEAN = "false"
     }
 
     stages {
@@ -81,6 +83,93 @@ pipeline {
             steps {
                 sh 'git branch -a'
                 sh 'git log -1'
+            }
+        }
+
+        /* ---------------------------------------------------------
+           Check Previous Build SCA (Consecutive Clean Builds)
+           --------------------------------------------------------- */
+        stage('Check SCA History') {
+            steps {
+                script {
+                    echo "=== Checking Previous Build SCA Results ==="
+                    
+                    // Initialize streak tracking
+                    def currentStreak = 0
+                    def previousBuildClean = false
+                    
+                    try {
+                        // Get previous successful build
+                        def previousBuild = currentBuild.previousSuccessfulBuild
+                        
+                        if (previousBuild != null) {
+                            echo "Previous Build: #${previousBuild.number}"
+                            
+                            // Try to read previous build's SCA summary
+                            def previousWorkspace = "${JENKINS_HOME}/jobs/${JOB_NAME}/builds/${previousBuild.number}/archive"
+                            
+                            def scaSummaryExists = sh(
+                                script: "test -f '${previousWorkspace}/sca-reports/summary.txt' && echo 'true' || echo 'false'",
+                                returnStdout: true
+                            ).trim()
+                            
+                            if (scaSummaryExists == 'true') {
+                                def scaSummary = sh(
+                                    script: "cat '${previousWorkspace}/sca-reports/summary.txt' || echo 'N/A'",
+                                    returnStdout: true
+                                ).trim()
+                                
+                                echo "Previous Build SCA Summary:"
+                                echo scaSummary
+                                
+                                // Check if previous build passed SCA (no Critical/High)
+                                if (scaSummary.contains('✅ PASSED')) {
+                                    previousBuildClean = true
+                                    echo "✅ Previous build had clean SCA results"
+                                    
+                                    // Try to read previous streak
+                                    def streakFileExists = sh(
+                                        script: "test -f '${previousWorkspace}/logs/sca-streak.txt' && echo 'true' || echo 'false'",
+                                        returnStdout: true
+                                    ).trim()
+                                    
+                                    if (streakFileExists == 'true') {
+                                        def previousStreak = sh(
+                                            script: "cat '${previousWorkspace}/logs/sca-streak.txt' || echo '0'",
+                                            returnStdout: true
+                                        ).trim().toInteger()
+                                        currentStreak = previousStreak
+                                        echo "Previous clean build streak: ${previousStreak}"
+                                    }
+                                } else {
+                                    echo "⚠️ Previous build had SCA violations"
+                                    currentStreak = 0
+                                }
+                            } else {
+                                echo "ℹ️ No SCA summary found for previous build"
+                            }
+                        } else {
+                            echo "ℹ️ No previous successful build found (first build or all previous builds failed)"
+                        }
+                        
+                        // Store in environment variables for later stages
+                        env.CLEAN_BUILD_STREAK = currentStreak.toString()
+                        env.PREVIOUS_BUILD_CLEAN = previousBuildClean.toString()
+                        
+                        echo ""
+                        echo "Current Status:"
+                        echo "  - Previous build clean: ${previousBuildClean}"
+                        echo "  - Current streak: ${currentStreak}"
+                        echo "  - This build must have 0 Critical/High to deploy"
+                        echo ""
+                        
+                    } catch (Exception e) {
+                        echo "⚠️ Warning: Could not check previous build SCA results: ${e.message}"
+                        echo "Continuing with streak = 0"
+                        env.CLEAN_BUILD_STREAK = "0"
+                        env.PREVIOUS_BUILD_CLEAN = "false"
+                    }
+                }
             }
         }
 
@@ -207,6 +296,10 @@ pipeline {
                         returnStdout: true
                     ).trim()
                     
+                    // Calculate new streak for display
+                    def currentStreak = env.CLEAN_BUILD_STREAK.toInteger()
+                    def newStreakDisplay = currentStreak + 1
+                    
                     // Check thresholds
                     sh """
                     # Count violations by severity
@@ -236,6 +329,8 @@ pipeline {
                     fi
                     
                     echo "✅ PASSED: No Critical/High issues above threshold" >> "$SCA_DIR/summary.txt"
+                    echo "" >> "$SCA_DIR/summary.txt"
+                    echo "Consecutive Clean Builds: ${currentStreak} → ${newStreakDisplay}" >> "$SCA_DIR/summary.txt"
                     cat "$SCA_DIR/summary.txt"
                     """
                 }
@@ -585,6 +680,9 @@ Approve deployment?
         
         success {
             script {
+                // Calculate new streak
+                def newStreak = (env.CLEAN_BUILD_STREAK.toInteger() + 1)
+                
                 echo ''
                 echo '✅ ========================================'
                 echo '✅  SALESFORCE DEPLOYMENT SUCCESSFUL'
@@ -595,10 +693,44 @@ Approve deployment?
                 echo "SCA Report: ${BUILD_URL}artifact/${SCA_DIR}/sca-report.html"
                 echo "Build Logs: ${BUILD_URL}console"
                 echo ''
+                echo '🏆 Code Quality Streak'
+                echo "   Consecutive Clean Builds: ${newStreak}"
+                if (newStreak >= 2) {
+                    echo "   ✅ TARGET ACHIEVED: 2+ consecutive deployments with 0 Critical/High issues!"
+                } else {
+                    echo "   📊 Continue to reach target of 2 consecutive clean builds"
+                }
+                echo ''
                 
                 sh """
+                mkdir -p logs
                 echo "success" > logs/build-status.txt
                 echo "Build ${BUILD_NUMBER} completed successfully at \$(date)" >> logs/build-status.txt
+                echo "" >> logs/build-status.txt
+                
+                # Store streak for next build
+                echo "${newStreak}" > logs/sca-streak.txt
+                
+                # Store detailed streak info
+                echo "=== Code Quality Streak ==="  > logs/sca-streak-details.txt
+                echo "Build Number: ${BUILD_NUMBER}" >> logs/sca-streak-details.txt
+                echo "Date: \$(date)" >> logs/sca-streak-details.txt
+                echo "Consecutive Clean Builds: ${newStreak}" >> logs/sca-streak-details.txt
+                echo "Critical Issues: 0" >> logs/sca-streak-details.txt
+                echo "High Issues: 0" >> logs/sca-streak-details.txt
+                echo "" >> logs/sca-streak-details.txt
+                
+                if [ ${newStreak} -ge 2 ]; then
+                    echo "✅ OBJECTIVE ACHIEVED: 2+ consecutive clean deployments" >> logs/sca-streak-details.txt
+                    echo "This demonstrates:" >> logs/sca-streak-details.txt
+                    echo "- No new Critical/High issues introduced" >> logs/sca-streak-details.txt
+                    echo "- Consistent code quality standards" >> logs/sca-streak-details.txt
+                    echo "- Security & quality awareness embedded in CI/CD" >> logs/sca-streak-details.txt
+                else
+                    echo "📊 Progress: ${newStreak} of 2 consecutive clean builds" >> logs/sca-streak-details.txt
+                fi
+                
+                cat logs/sca-streak-details.txt
                 """
             }
         }
@@ -630,6 +762,13 @@ Approve deployment?
                 echo "failure" > logs/build-status.txt
                 echo "Build ${BUILD_NUMBER} failed at \$(date)" >> logs/build-status.txt
                 echo "" >> logs/build-status.txt
+                
+                # Reset streak to 0 on failure
+                echo "0" > logs/sca-streak.txt
+                echo "⚠️ Consecutive clean build streak reset to 0" >> logs/build-status.txt
+                echo "Previous streak: ${CLEAN_BUILD_STREAK}" >> logs/build-status.txt
+                echo "" >> logs/build-status.txt
+                
                 echo "Common Failure Categories:" >> logs/build-status.txt
                 echo "1. CODE_QUALITY: SCA found Critical/High issues" >> logs/build-status.txt
                 echo "2. VALIDATION: Metadata validation failed" >> logs/build-status.txt
@@ -641,6 +780,7 @@ Approve deployment?
                 echo "- Document this failure in RCA template" >> logs/build-status.txt
                 echo "- Identify if this is a recurring issue" >> logs/build-status.txt
                 echo "- Implement preventive measures" >> logs/build-status.txt
+                echo "- Fix issues to restart clean build streak" >> logs/build-status.txt
                 """
             }
         }
