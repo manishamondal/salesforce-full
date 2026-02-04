@@ -67,6 +67,7 @@ pipeline {
         CLEAN_BUILD_STREAK = "0"
         PREVIOUS_BUILD_CLEAN = "false"
         GIT_COMMIT_HASH = ""
+        GIT_BRANCH = ""
     }
 
     stages {
@@ -76,13 +77,32 @@ pipeline {
            --------------------------------------------------------- */
         stage('Checkout') {
             steps {
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: '*/main']],
-                    userRemoteConfigs: [[
-                        url: 'https://github.com/manishamondal/salesforce-full.git'
-                    ]]
-                ])
+                script {
+                    // Map environment to branch
+                    def branchName = ''
+                    if (params.TARGET_ENV == 'DEV') {
+                        branchName = 'dev'
+                    } else if (params.TARGET_ENV == 'QA') {
+                        branchName = 'qa'
+                    } else {
+                        branchName = 'main'
+                    }
+                    
+                    env.GIT_BRANCH = branchName
+                    
+                    echo "========================================"
+                    echo "Target Environment: ${params.TARGET_ENV}"
+                    echo "Git Branch: ${branchName}"
+                    echo "========================================"
+                    
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: "*/${branchName}"]],
+                        userRemoteConfigs: [[
+                            url: 'https://github.com/manishamondal/salesforce-full.git'
+                        ]]
+                    ])
+                }
             }
         }
 
@@ -361,6 +381,7 @@ Proceed with rollback?""",
 
                     echo """
 Target Env  : ${params.TARGET_ENV}
+Git Branch  : ${env.GIT_BRANCH}
 SF Alias    : ${env.SF_ALIAS}
 User Cred   : ${env.SF_USERNAME_CRED}
 Client Cred : ${env.SF_CLIENT_ID_CRED}
@@ -685,6 +706,8 @@ Approve deployment?
                     echo "=== Deployment Summary ===" > logs/deployment-summary.txt
                     echo "Build: ${BUILD_NUMBER}" >> logs/deployment-summary.txt
                     echo "Status: SUCCESS" >> logs/deployment-summary.txt
+                    echo "Environment: ${params.TARGET_ENV}" >> logs/deployment-summary.txt
+                    echo "Git Branch: ${env.GIT_BRANCH}" >> logs/deployment-summary.txt
                     echo "Duration: ${duration}ms" >> logs/deployment-summary.txt
                     echo "Format: ${params.DEPLOY_FORMAT}" >> logs/deployment-summary.txt
                     echo "Scope: FULL" >> logs/deployment-summary.txt
@@ -791,11 +814,13 @@ Approve deployment?
                 echo "Started: ${new Date(currentBuild.startTimeInMillis)}" >> logs/pipeline-summary.txt
                 echo "" >> logs/pipeline-summary.txt
                 echo "Configuration:" >> logs/pipeline-summary.txt
+                echo "  - Environment: ${params.TARGET_ENV}" >> logs/pipeline-summary.txt
+                echo "  - Git Branch: ${env.GIT_BRANCH}" >> logs/pipeline-summary.txt
                 echo "  - Deploy Format: ${params.DEPLOY_FORMAT}" >> logs/pipeline-summary.txt
                 echo "  - Deploy Scope: FULL" >> logs/pipeline-summary.txt
                 echo "  - Test Level: ${params.TEST_LEVEL}" >> logs/pipeline-summary.txt
                 echo "  - Apex Classes: ${params.APEX_CLASSES ?: 'All'}" >> logs/pipeline-summary.txt
-                echo "  - Target Org Alias: ${SF_ALIAS}" >> logs/pipeline-summary.txt
+                echo "  - Target Org Alias: ${env.SF_ALIAS ?: 'Not set'}" >> logs/pipeline-summary.txt
 
                 echo "" >> logs/pipeline-summary.txt
                 
