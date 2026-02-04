@@ -535,11 +535,6 @@ Approve deployment?
                     # Verify org connectivity
                     "$SF" org display --target-org "$SF_ALIAS" --json
                     
-                    # List recent deployments
-                    echo "" 
-                    echo "Recent Deployments:"
-                    "$SF" org list metadata-types --target-org "$SF_ALIAS" || true
-
                     # Generate final build metrics
                     mkdir -p logs
                     echo "=== Build Metrics ===" > logs/build-metrics-summary.txt
