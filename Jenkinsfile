@@ -233,6 +233,13 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
                     
                     "$SF" scanner run \
                       --target "${scanDir}" \
+                      --format csv  \
+                      --outfile "$SCA_DIR/sca-report.csv" \
+                      --severity-threshold 1 \
+                      --normalize-severity || true                  
+
+                    "$SF" scanner run \
+                      --target "${scanDir}" \
                       --format html \
                       --outfile "$SCA_DIR/sca-report.html" \
                       --severity-threshold 1 \
