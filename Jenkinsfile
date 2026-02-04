@@ -73,6 +73,8 @@ pipeline {
         CLEAN_BUILD_STREAK = "0"
         PREVIOUS_BUILD_CLEAN = "false"
         GIT_COMMIT_HASH = ""
+        GIT_BRANCH = ""
+        BASELINE_TAG = ""
     }
 
     stages {
@@ -82,13 +84,29 @@ pipeline {
            --------------------------------------------------------- */
         stage('Checkout') {
             steps {
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: '*/main']],
-                    userRemoteConfigs: [[
-                        url: 'https://github.com/manishamondal/salesforce-full.git'
-                    ]]
-                ])
+                script {
+                    // Set branch and baseline tag based on target environment
+                    if (params.TARGET_ENV == 'DEV') {
+                        env.GIT_BRANCH = 'dev'
+                        env.BASELINE_TAG = 'dev-baseline'
+                    } else if (params.TARGET_ENV == 'QA') {
+                        env.GIT_BRANCH = 'qa'
+                        env.BASELINE_TAG = 'qa-baseline'
+                    }
+                    
+                    echo "Checking out branch: ${env.GIT_BRANCH}"
+                    echo "Baseline tag: ${env.BASELINE_TAG}"
+                    
+                    // Checkout with credentials
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: "*/${env.GIT_BRANCH}"]],
+                        userRemoteConfigs: [[
+                            url: 'https://github.com/manishamondal/salesforce-full.git',
+                            credentialsId: 'supercred'
+                        ]]
+                    ])
+                }
             }
         }
 
