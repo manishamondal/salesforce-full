@@ -649,7 +649,7 @@ Approve deployment?
                     echo "Scope: FULL" >> logs/deployment-summary.txt
                     echo "Test Level: ${params.TEST_LEVEL}" >> logs/deployment-summary.txt
                     echo "Timestamp: \$(date)" >> logs/deployment-summary.txt
-                    echo "Git Commit: ${GIT_COMMIT_HASH}" >> logs/deployment-summary.txt
+                    echo "Git Commit: ${env.GIT_COMMIT_HASH}" >> logs/deployment-summary.txt
                     echo "" >> logs/deployment-summary.txt
                     echo "Rollback Instructions:" >> logs/deployment-summary.txt
                     echo "1. Click 'Build with Parameters'" >> logs/deployment-summary.txt
@@ -804,7 +804,7 @@ Approve deployment?
                 echo "" >> logs/build-status.txt
                 
                 # Store git commit hash for rollback capability
-                echo "${GIT_COMMIT_HASH}" > logs/git-commit.txt
+                echo "${env.GIT_COMMIT_HASH}" > logs/git-commit.txt
                 
                 # Store streak for next build
                 echo "${newStreak}" > logs/sca-streak.txt
