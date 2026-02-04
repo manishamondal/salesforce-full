@@ -22,6 +22,12 @@ pipeline {
         )
 
         choice(
+            name: 'DEPLOY_SCOPE',
+            choices: ['FULL', 'DELTA'],
+            description: 'Deployment scope - FULL or DELTA (from baseline tag)'
+        )
+
+        choice(
             name: 'TEST_LEVEL',
             choices: ['NoTestRun', 'RunLocalTests'],
             description: 'Salesforce test level'
@@ -449,7 +455,7 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
                     echo "=== Static Code Analysis Summary ===" > "$SCA_DIR/summary.txt"
                     echo "Build: ${BUILD_NUMBER}" >> "$SCA_DIR/summary.txt"
                     echo "Date: \$(date)" >> "$SCA_DIR/summary.txt"
-                    echo "Scope: FULL" >> "$SCA_DIR/summary.txt"
+                    echo "Scope: ${params.DEPLOY_SCOPE}" >> "$SCA_DIR/summary.txt"
                     echo "Directory Scanned: ${scanDir}" >> "$SCA_DIR/summary.txt"
                     echo "" >> "$SCA_DIR/summary.txt"
                     """
@@ -520,6 +526,56 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
         }
 
         /* ---------------------------------------------------------
+           Generate Delta Package (if DELTA scope)
+           --------------------------------------------------------- */
+        stage('Generate Delta') {
+            when {
+                expression { params.DEPLOY_SCOPE == 'DELTA' }
+            }
+            steps {
+                script {
+                    echo "=== Generating Delta Package ==="
+                    echo "Baseline Tag: ${env.BASELINE_TAG}"
+                    echo "Current HEAD: ${env.GIT_COMMIT_HASH}"
+                    
+                    sh """
+                    mkdir -p "${DELTA_DIR}"
+                    
+                    # Generate delta using sfdx-git-delta
+                    echo "Comparing ${env.BASELINE_TAG} to HEAD..."
+                    
+                    "${SF}" sgd:source:delta \
+                      --to HEAD \
+                      --from "${env.BASELINE_TAG}" \
+                      --output "${DELTA_DIR}" \
+                      --generate-delta \
+                      --source force-app
+                    
+                    echo ""
+                    echo "Delta package generated in ${DELTA_DIR}"
+                    echo "Contents:"
+                    ls -la "${DELTA_DIR}" || true
+                    
+                    # Check if there are changes
+                    if [ -f "${DELTA_DIR}/package/package.xml" ]; then
+                        echo ""
+                        echo "Changes detected:"
+                        cat "${DELTA_DIR}/package/package.xml"
+                    else
+                        echo "⚠️  No changes detected between ${env.BASELINE_TAG} and HEAD"
+                        echo "Consider using FULL deployment or check if baseline tag is current"
+                    fi
+                    """
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: "${DELTA_DIR}/**/*", allowEmptyArchive: true
+                }
+            }
+        }
+
+        /* ---------------------------------------------------------
            Validate Deployment (Dry Run)
            --------------------------------------------------------- */
         stage('Validate Deployment') {
@@ -538,6 +594,19 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
                         rm -rf .sf .sfdx
                         "$SF" project deploy start \
                           --source-dir ${classPaths} \
+                          --target-org "$SF_ALIAS" \
+                          --test-level "$TEST_LEVEL" \
+                          --dry-run \
+                          --wait 60
+                        """
+                        return
+                    }
+
+                    if (params.DEPLOY_SCOPE == 'DELTA') {
+                        sh """
+                        rm -rf .sf .sfdx
+                        "$SF" project deploy start \
+                          --manifest "${DELTA_DIR}/package/package.xml" \
                           --target-org "$SF_ALIAS" \
                           --test-level "$TEST_LEVEL" \
                           --dry-run \
@@ -588,7 +657,7 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
                         echo "❌ Validation Failed" > logs/validation-failure.log
                         echo "Build: ${BUILD_NUMBER}" >> logs/validation-failure.log
                         echo "Format: ${params.DEPLOY_FORMAT}" >> logs/validation-failure.log
-                        echo "Scope: FULL" >> logs/validation-failure.log
+                        echo "Scope: ${params.DEPLOY_SCOPE}" >> logs/validation-failure.log
                         echo "Timestamp: \$(date)" >> logs/validation-failure.log
                         cat logs/validation-failure.log
                         """
@@ -608,7 +677,7 @@ Dry-run validation successful.
 
 Deployment details:
 - Format : ${params.DEPLOY_FORMAT}
-- Scope  : FULL
+- Scope  : ${params.DEPLOY_SCOPE}
 - Apex-only : ${params.APEX_CLASSES ?: 'No'}
 
 Approve deployment?
@@ -628,8 +697,10 @@ Approve deployment?
                     
                     echo "=== Starting Deployment ==="
                     echo "Build: ${BUILD_NUMBER}"
+                    echo "Environment: ${params.TARGET_ENV}"
+                    echo "Branch: ${env.GIT_BRANCH}"
                     echo "Format: ${params.DEPLOY_FORMAT}"
-                    echo "Scope: FULL"
+                    echo "Scope: ${params.DEPLOY_SCOPE}"
                     echo "Test Level: ${params.TEST_LEVEL}"
                     echo "Timestamp: ${new Date()}"
 
@@ -648,6 +719,21 @@ Approve deployment?
                           --test-level "$TEST_LEVEL" \
                           --wait 60
                         """
+                        return
+                    }
+
+                    if (params.DEPLOY_SCOPE == 'DELTA') {
+                        sh """
+                        rm -rf .sf .sfdx
+                        "$SF" project deploy start \
+                          --manifest "${DELTA_DIR}/package/package.xml" \
+                          --target-org "$SF_ALIAS" \
+                          --test-level "$TEST_LEVEL" \
+                          --wait 60
+                        """
+                        
+                        def duration = System.currentTimeMillis() - startTime
+                        echo "✅ Delta deployment completed in ${duration}ms"
                         return
                     }
 
@@ -687,7 +773,7 @@ Approve deployment?
                     echo "Status: SUCCESS" >> logs/deployment-summary.txt
                     echo "Duration: ${duration}ms" >> logs/deployment-summary.txt
                     echo "Format: ${params.DEPLOY_FORMAT}" >> logs/deployment-summary.txt
-                    echo "Scope: FULL" >> logs/deployment-summary.txt
+                    echo "Scope: ${params.DEPLOY_SCOPE}" >> logs/deployment-summary.txt
                     echo "Test Level: ${params.TEST_LEVEL}" >> logs/deployment-summary.txt
                     echo "Timestamp: \$(date)" >> logs/deployment-summary.txt
                     echo "Git Commit: ${env.GIT_COMMIT_HASH}" >> logs/deployment-summary.txt
@@ -714,7 +800,7 @@ Approve deployment?
                         echo "Build: ${BUILD_NUMBER}" >> logs/deployment-failure.log
                         echo "Failed Stage: Deploy" >> logs/deployment-failure.log
                         echo "Format: ${params.DEPLOY_FORMAT}" >> logs/deployment-failure.log
-                        echo "Scope: FULL" >> logs/deployment-failure.log
+                        echo "Scope: ${params.DEPLOY_SCOPE}" >> logs/deployment-failure.log
                         echo "Timestamp: \$(date)" >> logs/deployment-failure.log
                         echo "" >> logs/deployment-failure.log
                         echo "Recommended Actions:" >> logs/deployment-failure.log
@@ -753,7 +839,7 @@ Approve deployment?
                     echo "Build Number: ${BUILD_NUMBER}" >> logs/build-metrics-summary.txt
                     echo "Build Date: \$(date)" >> logs/build-metrics-summary.txt
                     echo "Format: ${params.DEPLOY_FORMAT}" >> logs/build-metrics-summary.txt
-                    echo "Scope: FULL" >> logs/build-metrics-summary.txt
+                    echo "Scope: ${params.DEPLOY_SCOPE}" >> logs/build-metrics-summary.txt
                     echo "" >> logs/build-metrics-summary.txt
                     
                     if [ -f "$BUILD_METRICS" ]; then
@@ -768,6 +854,46 @@ Approve deployment?
             post {
                 always {
                     archiveArtifacts artifacts: 'logs/**/*,*.json,', allowEmptyArchive: true
+                }
+            }
+        }
+
+        /* ---------------------------------------------------------
+           Update Baseline Tag (on successful deployment)
+           --------------------------------------------------------- */
+        stage('Update Baseline Tag') {
+            when {
+                expression { currentBuild.result == null || currentBuild.result == 'SUCCESS' }
+            }
+            steps {
+                script {
+                    echo "=== Updating Baseline Tag ==="
+                    echo "Tag: ${env.BASELINE_TAG}"
+                    echo "Commit: ${env.GIT_COMMIT_HASH}"
+                    
+                    withCredentials([usernamePassword(
+                        credentialsId: 'supercred',
+                        usernameVariable: 'GIT_USERNAME',
+                        passwordVariable: 'GIT_PASSWORD'
+                    )]) {
+                        sh '''
+                        # Configure Git
+                        git config user.email "jenkins@ci.com"
+                        git config user.name "Jenkins CI"
+                        
+                        # Delete existing tag locally and remotely
+                        git tag -d "$BASELINE_TAG" || true
+                        git push https://"$GIT_USERNAME":"$GIT_PASSWORD"@github.com/manishamondal/salesforce-full.git :refs/tags/"$BASELINE_TAG" || true
+                        
+                        # Create new tag at current commit
+                        git tag -a "$BASELINE_TAG" -m "Updated by Jenkins Build #${BUILD_NUMBER} on $(date)"
+                        
+                        # Push tag to remote
+                        git push https://"$GIT_USERNAME":"$GIT_PASSWORD"@github.com/manishamondal/salesforce-full.git "$BASELINE_TAG"
+                        
+                        echo "✅ Baseline tag $BASELINE_TAG updated to ${GIT_COMMIT_HASH}"
+                        '''
+                    }
                 }
             }
         }
@@ -792,7 +918,7 @@ Approve deployment?
                 echo "" >> logs/pipeline-summary.txt
                 echo "Configuration:" >> logs/pipeline-summary.txt
                 echo "  - Deploy Format: ${params.DEPLOY_FORMAT}" >> logs/pipeline-summary.txt
-                echo "  - Deploy Scope: FULL" >> logs/pipeline-summary.txt
+                echo "  - Deploy Scope: ${params.DEPLOY_SCOPE}" >> logs/pipeline-summary.txt
                 echo "  - Test Level: ${params.TEST_LEVEL}" >> logs/pipeline-summary.txt
                 echo "  - Apex Classes: ${params.APEX_CLASSES ?: 'All'}" >> logs/pipeline-summary.txt
                 echo "  - Target Org Alias: ${SF_ALIAS}" >> logs/pipeline-summary.txt
