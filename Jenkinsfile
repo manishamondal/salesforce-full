@@ -22,12 +22,6 @@ pipeline {
         )
 
         choice(
-            name: 'DEPLOY_SCOPE',
-            choices: ['FULL'],
-            description: 'Deployment scope'
-        )
-
-        choice(
             name: 'TEST_LEVEL',
             choices: ['NoTestRun', 'RunLocalTests'],
             description: 'Salesforce test level'
@@ -232,8 +226,15 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
                     # Run code analyzer with multiple formats
                     "$SF" scanner run \
                       --target "${scanDir}" \
-                      --format html --format json --format csv \
-                      --outfile "$SCA_DIR/sca-report" \
+                      --format json  \
+                      --outfile "$SCA_DIR/sca-report.json" \
+                      --severity-threshold 1 \
+                      --normalize-severity || true
+                    
+                    "$SF" scanner run \
+                      --target "${scanDir}" \
+                      --format html \
+                      --outfile "$SCA_DIR/sca-report.html" \
                       --severity-threshold 1 \
                       --normalize-severity || true
                     
@@ -241,7 +242,7 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
                     echo "=== Static Code Analysis Summary ===" > "$SCA_DIR/summary.txt"
                     echo "Build: ${BUILD_NUMBER}" >> "$SCA_DIR/summary.txt"
                     echo "Date: \$(date)" >> "$SCA_DIR/summary.txt"
-                    echo "Scope: ${params.DEPLOY_SCOPE}" >> "$SCA_DIR/summary.txt"
+                    echo "Scope: FULL" >> "$SCA_DIR/summary.txt"
                     echo "Directory Scanned: ${scanDir}" >> "$SCA_DIR/summary.txt"
                     echo "" >> "$SCA_DIR/summary.txt"
                     """
@@ -380,7 +381,7 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
                         echo "❌ Validation Failed" > logs/validation-failure.log
                         echo "Build: ${BUILD_NUMBER}" >> logs/validation-failure.log
                         echo "Format: ${params.DEPLOY_FORMAT}" >> logs/validation-failure.log
-                        echo "Scope: ${params.DEPLOY_SCOPE}" >> logs/validation-failure.log
+                        echo "Scope: FULL" >> logs/validation-failure.log
                         echo "Timestamp: \$(date)" >> logs/validation-failure.log
                         cat logs/validation-failure.log
                         """
@@ -400,7 +401,7 @@ Dry-run validation successful.
 
 Deployment details:
 - Format : ${params.DEPLOY_FORMAT}
-- Scope  : ${params.DEPLOY_SCOPE}
+- Scope  : FULL
 - Apex-only : ${params.APEX_CLASSES ?: 'No'}
 
 Approve deployment?
@@ -421,7 +422,7 @@ Approve deployment?
                     echo "=== Starting Deployment ==="
                     echo "Build: ${BUILD_NUMBER}"
                     echo "Format: ${params.DEPLOY_FORMAT}"
-                    echo "Scope: ${params.DEPLOY_SCOPE}"
+                    echo "Scope: FULL"
                     echo "Test Level: ${params.TEST_LEVEL}"
                     echo "Timestamp: ${new Date()}"
 
@@ -479,7 +480,7 @@ Approve deployment?
                     echo "Status: SUCCESS" >> logs/deployment-summary.txt
                     echo "Duration: ${duration}ms" >> logs/deployment-summary.txt
                     echo "Format: ${params.DEPLOY_FORMAT}" >> logs/deployment-summary.txt
-                    echo "Scope: ${params.DEPLOY_SCOPE}" >> logs/deployment-summary.txt
+                    echo "Scope: FULL" >> logs/deployment-summary.txt
                     echo "Test Level: ${params.TEST_LEVEL}" >> logs/deployment-summary.txt
                     echo "Timestamp: \$(date)" >> logs/deployment-summary.txt
                     echo "" >> logs/deployment-summary.txt
@@ -501,7 +502,7 @@ Approve deployment?
                         echo "Build: ${BUILD_NUMBER}" >> logs/deployment-failure.log
                         echo "Failed Stage: Deploy" >> logs/deployment-failure.log
                         echo "Format: ${params.DEPLOY_FORMAT}" >> logs/deployment-failure.log
-                        echo "Scope: ${params.DEPLOY_SCOPE}" >> logs/deployment-failure.log
+                        echo "Scope: FULL" >> logs/deployment-failure.log
                         echo "Timestamp: \$(date)" >> logs/deployment-failure.log
                         echo "" >> logs/deployment-failure.log
                         echo "Recommended Actions:" >> logs/deployment-failure.log
@@ -545,7 +546,7 @@ Approve deployment?
                     echo "Build Number: ${BUILD_NUMBER}" >> logs/build-metrics-summary.txt
                     echo "Build Date: \$(date)" >> logs/build-metrics-summary.txt
                     echo "Format: ${params.DEPLOY_FORMAT}" >> logs/build-metrics-summary.txt
-                    echo "Scope: ${params.DEPLOY_SCOPE}" >> logs/build-metrics-summary.txt
+                    echo "Scope: FULL" >> logs/build-metrics-summary.txt
                     echo "" >> logs/build-metrics-summary.txt
                     
                     if [ -f "$BUILD_METRICS" ]; then
@@ -584,7 +585,7 @@ Approve deployment?
                 echo "" >> logs/pipeline-summary.txt
                 echo "Configuration:" >> logs/pipeline-summary.txt
                 echo "  - Deploy Format: ${params.DEPLOY_FORMAT}" >> logs/pipeline-summary.txt
-                echo "  - Deploy Scope: ${params.DEPLOY_SCOPE}" >> logs/pipeline-summary.txt
+                echo "  - Deploy Scope: FULL" >> logs/pipeline-summary.txt
                 echo "  - Test Level: ${params.TEST_LEVEL}" >> logs/pipeline-summary.txt
                 echo "  - Apex Classes: ${params.APEX_CLASSES ?: 'All'}" >> logs/pipeline-summary.txt
                 echo "  - Target Org Alias: ${SF_ALIAS}" >> logs/pipeline-summary.txt
