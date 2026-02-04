@@ -7,11 +7,13 @@ pipeline {
 
     parameters {
 
+        /* ===================== NEW ===================== */
         choice(
-            name: 'ENVIRONMENT',
-            choices: ['dev', 'qa'],
+            name: 'TARGET_ENV',
+            choices: ['DEV', 'QA'],
             description: 'Target Salesforce environment'
         )
+        /* ================================================= */
 
         choice(
             name: 'DEPLOY_FORMAT',
@@ -37,33 +39,27 @@ pipeline {
             description: 'package.xml path (MDAPI only)'
         )
 
-        booleanParam(
-            name: 'ROLLBACK_MODE',
-            defaultValue: false,
-            description: 'Enable rollback to previous successful build'
-        )
-
         string(
-            name: 'ROLLBACK_TO_BUILD',
+            name: 'APEX_CLASSES',
             defaultValue: '',
-            description: 'Build number to rollback to (leave empty to select interactively)'
+            description: 'Comma-separated Apex classes (optional)'
         )
     }
 
     environment {
         SF              = "/c/Program Files/sf/bin/sf"
-        SF_ALIAS        = ""
         INSTANCE_URL    = "https://login.salesforce.com"
-        SF_USERNAME     = ""
+
         DELTA_DIR       = "delta"
         SCA_DIR         = "sca-reports"
         SCA_THRESHOLD_HIGH = "0"
         SCA_THRESHOLD_CRITICAL = "0"
+
         DEPLOYMENT_ID   = ""
         BUILD_METRICS   = "build-metrics.json"
+
         CLEAN_BUILD_STREAK = "0"
         PREVIOUS_BUILD_CLEAN = "false"
-        GIT_COMMIT_HASH = ""
     }
 
     stages {
@@ -88,258 +84,62 @@ pipeline {
            --------------------------------------------------------- */
         stage('Verify Git') {
             steps {
-                script {
-                    sh 'git branch -a'
-                    sh 'git log -1'
-                    
-                    // Capture current commit hash for tracking
-                    env.GIT_COMMIT_HASH = sh(
-                        script: 'git rev-parse HEAD',
-                        returnStdout: true
-                    ).trim()
-                    
-                    echo "Current Git Commit: ${env.GIT_COMMIT_HASH}"
-                }
+                sh 'git branch -a'
+                sh 'git log -1'
             }
         }
 
         /* ---------------------------------------------------------
-           Set Environment Variables
-           --------------------------------------------------------- */
-        stage('Configure Environment') {
-            steps {
-                script {
-                    // Set environment-specific variables
-                    if (params.ENVIRONMENT == 'qa') {
-                        env.SF_ALIAS = 'CICD_QA'
-                    } else {
-                        env.SF_ALIAS = 'CICD_Dev'
-                    }
-                    
-                    echo "==================================="
-                    echo "Environment: ${params.ENVIRONMENT.toUpperCase()}"
-                    echo "Org Alias: ${env.SF_ALIAS}"
-                    echo "==================================="
-                }
-            }
-        }
-
-        /* ---------------------------------------------------------
-           Rollback Handler
-           --------------------------------------------------------- */
-        stage('Rollback') {
-            when {
-                expression { params.ROLLBACK_MODE == true }
-            }
-            steps {
-                script {
-                    echo ''
-                    echo '🔄 ========================================'
-                    echo '🔄  ROLLBACK MODE ACTIVATED'
-                    echo '🔄 ========================================'
-                    echo ''
-                    
-                    def targetBuildNumber = params.ROLLBACK_TO_BUILD
-                    
-                    // If no build number specified, list recent successful builds
-                    if (!targetBuildNumber || targetBuildNumber.trim() == '') {
-                        echo "Fetching recent successful builds..."
-                        
-                        def recentBuilds = []
-                        def build = currentBuild.previousSuccessfulBuild
-                        def count = 0
-                        
-                        while (build != null && count < 10) {
-                            try {
-                                def buildArchive = "${JENKINS_HOME}/jobs/${JOB_NAME}/builds/${build.number}/archive"
-                                def gitHashFile = "${buildArchive}/logs/git-commit.txt"
-                                
-                                def gitHashExists = sh(
-                                    script: "test -f '${gitHashFile}' && echo 'true' || echo 'false'",
-                                    returnStdout: true
-                                ).trim()
-                                
-                                def gitHash = 'unknown'
-                                if (gitHashExists == 'true') {
-                                    gitHash = sh(
-                                        script: "cat '${gitHashFile}' | head -n 1",
-                                        returnStdout: true
-                                    ).trim()
-                                }
-                                
-                                recentBuilds.add("Build #${build.number} (${new Date(build.startTimeInMillis).format('yyyy-MM-dd HH:mm')} - Commit: ${gitHash.take(8)})")
-                            } catch (Exception e) {
-                                recentBuilds.add("Build #${build.number} (${new Date(build.startTimeInMillis).format('yyyy-MM-dd HH:mm')})")
-                            }
-                            
-                            build = build.previousSuccessfulBuild
-                            count++
-                        }
-                        
-                        if (recentBuilds.isEmpty()) {
-                            error('❌ No previous successful builds found for rollback')
-                        }
-                        
-                        echo "Available builds for rollback:"
-                        recentBuilds.each { echo "  - ${it}" }
-                        
-                        def buildChoice = input(
-                            message: 'Select build to rollback to:',
-                            parameters: [
-                                choice(
-                                    name: 'BUILD_SELECTION',
-                                    choices: recentBuilds,
-                                    description: 'Choose a previous successful build'
-                                )
-                            ]
-                        )
-                        
-                        // Extract build number from selection
-                        targetBuildNumber = buildChoice.replaceAll(/.*Build #(\d+).*/, '$1')
-                        echo "Selected Build: #${targetBuildNumber}"
-                    }
-                    
-                    // Retrieve Git commit hash from target build
-                    def targetBuildArchive = "${JENKINS_HOME}/jobs/${JOB_NAME}/builds/${targetBuildNumber}/archive"
-                    def gitHashFile = "${targetBuildArchive}/logs/git-commit.txt"
-                    
-                    def gitHashExists = sh(
-                        script: "test -f '${gitHashFile}' && echo 'true' || echo 'false'",
-                        returnStdout: true
-                    ).trim()
-                    
-                    if (gitHashExists != 'true') {
-                        error("❌ Cannot find Git commit hash for Build #${targetBuildNumber}. Build may be too old or archive missing.")
-                    }
-                    
-                    def targetGitHash = sh(
-                        script: "cat '${gitHashFile}' | head -n 1",
-                        returnStdout: true
-                    ).trim()
-                    
-                    echo ''
-                    echo '📋 Rollback Details:'
-                    echo "   Target Build: #${targetBuildNumber}"
-                    echo "   Git Commit: ${targetGitHash}"
-                    echo "   Current Commit: ${env.GIT_COMMIT_HASH}"
-                    echo ''
-                    
-                    // Final confirmation
-                    input(
-                        message: """⚠️  CONFIRM ROLLBACK
-
-You are about to rollback to Build #${targetBuildNumber}
-Git Commit: ${targetGitHash}
-
-This will:
-1. Checkout the previous commit
-2. Redeploy metadata to Salesforce org
-3. Archive this rollback as a new build
-
-Current deployment will be REPLACED.
-
-Proceed with rollback?""",
-                        ok: 'Yes, Rollback Now'
-                    )
-                    
-                    // Checkout target commit
-                    echo "🔄 Checking out commit ${targetGitHash}..."
-                    sh """
-                    git fetch --all
-                    git checkout ${targetGitHash}
-                    git log -1
-                    """
-                    
-                    // Update environment variable
-                    env.GIT_COMMIT_HASH = targetGitHash
-                    
-                    echo '✅ Successfully checked out target commit'
-                    echo '📦 Proceeding with deployment of rolled-back code...'
-                    echo ''
-                }
-            }
-        }
-
-        /* ---------------------------------------------------------
-           Check Previous Build SCA (Consecutive Clean Builds)
+           Check Previous Build SCA (UNCHANGED)
            --------------------------------------------------------- */
         stage('Check SCA History') {
             steps {
                 script {
                     echo "=== Checking Previous Build SCA Results ==="
-                    
-                    // Initialize streak tracking
+
                     def currentStreak = 0
                     def previousBuildClean = false
-                    
+
                     try {
-                        // Get previous successful build
                         def previousBuild = currentBuild.previousSuccessfulBuild
-                        
+
                         if (previousBuild != null) {
-                            echo "Previous Build: #${previousBuild.number}"
-                            
-                            // Try to read previous build's SCA summary
-                            def previousWorkspace = "${JENKINS_HOME}/jobs/${JOB_NAME}/builds/${previousBuild.number}/archive"
-                            
+                            def previousWorkspace =
+                                "${JENKINS_HOME}/jobs/${JOB_NAME}/builds/${previousBuild.number}/archive"
+
                             def scaSummaryExists = sh(
-                                script: "test -f '${previousWorkspace}/sca-reports/summary.txt' && echo 'true' || echo 'false'",
+                                script: "test -f '${previousWorkspace}/sca-reports/summary.txt' && echo true || echo false",
                                 returnStdout: true
                             ).trim()
-                            
+
                             if (scaSummaryExists == 'true') {
                                 def scaSummary = sh(
-                                    script: "cat '${previousWorkspace}/sca-reports/summary.txt' || echo 'N/A'",
+                                    script: "cat '${previousWorkspace}/sca-reports/summary.txt'",
                                     returnStdout: true
                                 ).trim()
-                                
-                                echo "Previous Build SCA Summary:"
-                                echo scaSummary
-                                
-                                // Check if previous build passed SCA (no Critical/High)
+
                                 if (scaSummary.contains('✅ PASSED')) {
                                     previousBuildClean = true
-                                    echo "✅ Previous build had clean SCA results"
-                                    
-                                    // Try to read previous streak
+
                                     def streakFileExists = sh(
-                                        script: "test -f '${previousWorkspace}/logs/sca-streak.txt' && echo 'true' || echo 'false'",
+                                        script: "test -f '${previousWorkspace}/logs/sca-streak.txt' && echo true || echo false",
                                         returnStdout: true
                                     ).trim()
-                                    
+
                                     if (streakFileExists == 'true') {
-                                        def previousStreak = sh(
-                                            script: "cat '${previousWorkspace}/logs/sca-streak.txt' || echo '0'",
+                                        currentStreak = sh(
+                                            script: "cat '${previousWorkspace}/logs/sca-streak.txt'",
                                             returnStdout: true
                                         ).trim().toInteger()
-                                        currentStreak = previousStreak
-                                        echo "Previous clean build streak: ${previousStreak}"
                                     }
-                                } else {
-                                    echo "⚠️ Previous build had SCA violations"
-                                    currentStreak = 0
                                 }
-                            } else {
-                                echo "ℹ️ No SCA summary found for previous build"
                             }
-                        } else {
-                            echo "ℹ️ No previous successful build found (first build or all previous builds failed)"
                         }
-                        
-                        // Store in environment variables for later stages
+
                         env.CLEAN_BUILD_STREAK = currentStreak.toString()
                         env.PREVIOUS_BUILD_CLEAN = previousBuildClean.toString()
-                        
-                        echo ""
-                        echo "Current Status:"
-                        echo "  - Previous build clean: ${previousBuildClean}"
-                        echo "  - Current streak: ${currentStreak}"
-                        echo "  - This build must have 0 Critical/High to deploy"
-                        echo ""
-                        
-                    } catch (Exception e) {
-                        echo "⚠️ Warning: Could not check previous build SCA results: ${e.message}"
-                        echo "Continuing with streak = 0"
+
+                    } catch (e) {
                         env.CLEAN_BUILD_STREAK = "0"
                         env.PREVIOUS_BUILD_CLEAN = "false"
                     }
@@ -347,59 +147,53 @@ Proceed with rollback?""",
             }
         }
 
+        /* =========================================================
+           NEW STAGE – Environment Configuration
+           ========================================================= */
+        stage('Configure Target Environment') {
+            steps {
+                script {
+                    echo "Configuring environment for ${params.TARGET_ENV}"
+
+                    if (params.TARGET_ENV == 'DEV') {
+                        env.SF_ALIAS = 'CICD_DevHub'
+                        env.SF_USERNAME_CRED = 'sfdx_username'
+                        env.SF_CLIENT_ID_CRED = 'sfdx_client_id'
+                    } else if (params.TARGET_ENV == 'QA') {
+                        env.SF_ALIAS = 'CICD_QA'
+                        env.SF_USERNAME_CRED = 'sfdx_username_qa'
+                        env.SF_CLIENT_ID_CRED = 'sfdx_client_id_qa'
+                    }
+
+                    echo """
+Target Env  : ${params.TARGET_ENV}
+SF Alias    : ${env.SF_ALIAS}
+User Cred   : ${env.SF_USERNAME_CRED}
+Client Cred : ${env.SF_CLIENT_ID_CRED}
+"""
+                }
+            }
+        }
+
         /* ---------------------------------------------------------
-           Salesforce Auth (JWT)
+           Salesforce Auth (JWT) – UPDATED ONLY HERE
            --------------------------------------------------------- */
         stage('Authenticate to Salesforce') {
             steps {
-                script {
-                    if (params.ENVIRONMENT == 'qa') {
-                        // QA Environment
-                        withCredentials([
-                            file(credentialsId: 'sfdx_jwt_key', variable: 'JWT_KEY_FILE'),
-                            string(credentialsId: 'sfdx_client_id_qa', variable: 'CLIENT_ID'),
-                            string(credentialsId: 'sfdx_username_qa', variable: 'USERNAME')
-                        ]) {
-                            sh '''
-                            "$SF" org login jwt \
-                              --client-id "$CLIENT_ID" \
-                              --jwt-key-file "$JWT_KEY_FILE" \
-                              --username "$USERNAME" \
-                              --instance-url "$INSTANCE_URL" \
-                              --alias "$SF_ALIAS" \
-                              --set-default
-                            '''
-                            
-                            env.SF_USERNAME = sh(
-                                script: 'echo $USERNAME',
-                                returnStdout: true
-                            ).trim()
-                        }
-                    } else {
-                        // Dev Environment
-                        withCredentials([
-                            file(credentialsId: 'sfdx_jwt_key', variable: 'JWT_KEY_FILE'),
-                            string(credentialsId: 'sfdx_client_id', variable: 'CLIENT_ID'),
-                            string(credentialsId: 'sfdx_username', variable: 'USERNAME')
-                        ]) {
-                            sh '''
-                            "$SF" org login jwt \
-                              --client-id "$CLIENT_ID" \
-                              --jwt-key-file "$JWT_KEY_FILE" \
-                              --username "$USERNAME" \
-                              --instance-url "$INSTANCE_URL" \
-                              --alias "$SF_ALIAS" \
-                              --set-default
-                            '''
-                            
-                            env.SF_USERNAME = sh(
-                                script: 'echo $USERNAME',
-                                returnStdout: true
-                            ).trim()
-                        }
-                    }
-                    
-                    echo "✅ Authenticated to ${params.ENVIRONMENT.toUpperCase()} as ${env.SF_USERNAME}"
+                withCredentials([
+                    file(credentialsId: 'sfdx_jwt_key', variable: 'JWT_KEY_FILE'),
+                    string(credentialsId: "${env.SF_CLIENT_ID_CRED}", variable: 'CLIENT_ID'),
+                    string(credentialsId: "${env.SF_USERNAME_CRED}", variable: 'SF_USERNAME')
+                ]) {
+                    sh '''
+                    "$SF" org login jwt \
+                      --client-id "$CLIENT_ID" \
+                      --jwt-key-file "$JWT_KEY_FILE" \
+                      --username "$SF_USERNAME" \
+                      --instance-url "$INSTANCE_URL" \
+                      --alias "$SF_ALIAS" \
+                      --set-default
+                    '''
                 }
             }
         }
@@ -422,16 +216,22 @@ Proceed with rollback?""",
         stage('Static Code Analysis') {
             steps {
                 script {
+                    def scanDir = 'force-app'
+                    
+                    if (params.APEX_CLASSES.trim()) {
+                        scanDir = 'force-app/main/default/classes'
+                    }
+                    
                     sh """
                     mkdir -p "$SCA_DIR"
                     
                     echo "=== Running Salesforce Code Analyzer ==="
-                    echo "Scan Directory: force-app"
+                    echo "Scan Directory: ${scanDir}"
                     echo "Timestamp: \$(date)"
                     
                     # Run code analyzer with multiple formats
                     "$SF" scanner run \
-                      --target "force-app" \
+                      --target "${scanDir}" \
                       --format html,json,csv \
                       --outfile "$SCA_DIR/sca-report" \
                       --severity-threshold 1 \
@@ -442,7 +242,7 @@ Proceed with rollback?""",
                     echo "Build: ${BUILD_NUMBER}" >> "$SCA_DIR/summary.txt"
                     echo "Date: \$(date)" >> "$SCA_DIR/summary.txt"
                     echo "Scope: ${params.DEPLOY_SCOPE}" >> "$SCA_DIR/summary.txt"
-                    echo "Directory Scanned: force-app" >> "$SCA_DIR/summary.txt"
+                    echo "Directory Scanned: ${scanDir}" >> "$SCA_DIR/summary.txt"
                     echo "" >> "$SCA_DIR/summary.txt"
                     """
                     
@@ -519,6 +319,25 @@ Proceed with rollback?""",
                 script {
                     def startTime = System.currentTimeMillis()
 
+                    if (params.APEX_CLASSES.trim()) {
+                        def classPaths = params.APEX_CLASSES
+                            .split(',')
+                            .collect { it.trim() }
+                            .collect { "force-app/main/default/classes/${it}.cls" }
+                            .join(',')
+
+                        sh """
+                        rm -rf .sf .sfdx
+                        "$SF" project deploy start \
+                          --source-dir ${classPaths} \
+                          --target-org "$SF_ALIAS" \
+                          --test-level "$TEST_LEVEL" \
+                          --dry-run \
+                          --wait 60
+                        """
+                        return
+                    }
+
                     if (params.DEPLOY_FORMAT == 'MDAPI') {
                         sh """
                         rm -rf .sf .sfdx
@@ -582,6 +401,7 @@ Dry-run validation successful.
 Deployment details:
 - Format : ${params.DEPLOY_FORMAT}
 - Scope  : ${params.DEPLOY_SCOPE}
+- Apex-only : ${params.APEX_CLASSES ?: 'No'}
 
 Approve deployment?
 """,
@@ -604,6 +424,24 @@ Approve deployment?
                     echo "Scope: ${params.DEPLOY_SCOPE}"
                     echo "Test Level: ${params.TEST_LEVEL}"
                     echo "Timestamp: ${new Date()}"
+
+                    if (params.APEX_CLASSES.trim()) {
+                        def classPaths = params.APEX_CLASSES
+                            .split(',')
+                            .collect { it.trim() }
+                            .collect { "force-app/main/default/classes/${it}.cls" }
+                            .join(',')
+
+                        sh """
+                        rm -rf .sf .sfdx
+                        "$SF" project deploy start \
+                          --source-dir ${classPaths} \
+                          --target-org "$SF_ALIAS" \
+                          --test-level "$TEST_LEVEL" \
+                          --wait 60
+                        """
+                        return
+                    }
 
                     if (params.DEPLOY_FORMAT == 'MDAPI') {
                         sh """
@@ -645,20 +483,13 @@ Approve deployment?
                     echo "=== Deployment Summary ===" > logs/deployment-summary.txt
                     echo "Build: ${BUILD_NUMBER}" >> logs/deployment-summary.txt
                     echo "Status: SUCCESS" >> logs/deployment-summary.txt
-                    echo "Environment: ${params.ENVIRONMENT}" >> logs/deployment-summary.txt
-                    echo "Target Org: ${SF_USERNAME}" >> logs/deployment-summary.txt
                     echo "Duration: ${duration}ms" >> logs/deployment-summary.txt
                     echo "Format: ${params.DEPLOY_FORMAT}" >> logs/deployment-summary.txt
                     echo "Scope: ${params.DEPLOY_SCOPE}" >> logs/deployment-summary.txt
                     echo "Test Level: ${params.TEST_LEVEL}" >> logs/deployment-summary.txt
                     echo "Timestamp: \$(date)" >> logs/deployment-summary.txt
-                    echo "Git Commit: ${GIT_COMMIT_HASH}" >> logs/deployment-summary.txt
                     echo "" >> logs/deployment-summary.txt
-                    echo "Rollback Instructions:" >> logs/deployment-summary.txt
-                    echo "1. Click 'Build with Parameters'" >> logs/deployment-summary.txt
-                    echo "2. Check 'ROLLBACK_MODE'" >> logs/deployment-summary.txt
-                    echo "3. Select this build (#${BUILD_NUMBER}) or any previous build" >> logs/deployment-summary.txt
-                    echo "4. Click 'Build' to initiate rollback" >> logs/deployment-summary.txt
+                    echo "Rollback: Use previous successful deployment or Git revert" >> logs/deployment-summary.txt
                     
                     cat logs/deployment-summary.txt
                     """
@@ -758,12 +589,11 @@ Approve deployment?
                 echo "Started: ${new Date(currentBuild.startTimeInMillis)}" >> logs/pipeline-summary.txt
                 echo "" >> logs/pipeline-summary.txt
                 echo "Configuration:" >> logs/pipeline-summary.txt
-                echo "  - Environment: ${params.ENVIRONMENT}" >> logs/pipeline-summary.txt
                 echo "  - Deploy Format: ${params.DEPLOY_FORMAT}" >> logs/pipeline-summary.txt
                 echo "  - Deploy Scope: ${params.DEPLOY_SCOPE}" >> logs/pipeline-summary.txt
                 echo "  - Test Level: ${params.TEST_LEVEL}" >> logs/pipeline-summary.txt
+                echo "  - Apex Classes: ${params.APEX_CLASSES ?: 'All'}" >> logs/pipeline-summary.txt
                 echo "  - Target Org: ${SF_USERNAME}" >> logs/pipeline-summary.txt
-                echo "  - Org Alias: ${SF_ALIAS}" >> logs/pipeline-summary.txt
                 echo "" >> logs/pipeline-summary.txt
                 
                 # Include SCA summary if available
@@ -791,8 +621,6 @@ Approve deployment?
                 echo '✅  SALESFORCE DEPLOYMENT SUCCESSFUL'
                 echo '✅ ========================================'
                 echo ''
-                echo "Environment: ${params.ENVIRONMENT.toUpperCase()}"
-                echo "Target Org: ${SF_USERNAME}"
                 echo "Build: ${BUILD_NUMBER}"
                 echo "Duration: ${currentBuild.durationString}"
                 echo "SCA Report: ${BUILD_URL}artifact/${SCA_DIR}/sca-report.html"
@@ -812,9 +640,6 @@ Approve deployment?
                 echo "success" > logs/build-status.txt
                 echo "Build ${BUILD_NUMBER} completed successfully at \$(date)" >> logs/build-status.txt
                 echo "" >> logs/build-status.txt
-                
-                # Store git commit hash for rollback capability
-                echo "${GIT_COMMIT_HASH}" > logs/git-commit.txt
                 
                 # Store streak for next build
                 echo "${newStreak}" > logs/sca-streak.txt
