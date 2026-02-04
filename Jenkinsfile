@@ -232,7 +232,7 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
                     # Run code analyzer with multiple formats
                     "$SF" scanner run \
                       --target "${scanDir}" \
-                      --format html,json,csv \
+                      --format html --format json --format csv \
                       --outfile "$SCA_DIR/sca-report" \
                       --severity-threshold 1 \
                       --normalize-severity || true
@@ -465,12 +465,6 @@ Approve deployment?
                       --wait 60
                     """
                     
-                    // Capture deployment ID for rollback readiness
-                    def deploymentOutput = sh(
-                        script: """"$SF" org list metadata-types --target-org "$SF_ALIAS" --json | head -20 || echo '{}'""",
-                        returnStdout: true
-                    ).trim()
-                    
                     def duration = System.currentTimeMillis() - startTime
                     echo "✅ Deployment completed in ${duration}ms"
                     
@@ -544,7 +538,7 @@ Approve deployment?
                     echo "" 
                     echo "Recent Deployments:"
                     "$SF" org list metadata-types --target-org "$SF_ALIAS" || true
-                    
+
                     # Generate final build metrics
                     mkdir -p logs
                     echo "=== Build Metrics ===" > logs/build-metrics-summary.txt
@@ -593,7 +587,8 @@ Approve deployment?
                 echo "  - Deploy Scope: ${params.DEPLOY_SCOPE}" >> logs/pipeline-summary.txt
                 echo "  - Test Level: ${params.TEST_LEVEL}" >> logs/pipeline-summary.txt
                 echo "  - Apex Classes: ${params.APEX_CLASSES ?: 'All'}" >> logs/pipeline-summary.txt
-                echo "  - Target Org: ${SF_USERNAME}" >> logs/pipeline-summary.txt
+                echo "  - Target Org Alias: ${SF_ALIAS}" >> logs/pipeline-summary.txt
+
                 echo "" >> logs/pipeline-summary.txt
                 
                 # Include SCA summary if available
