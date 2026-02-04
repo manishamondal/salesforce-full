@@ -86,6 +86,25 @@ pipeline {
             }
         }
 
+stage('Capture Git Commit') {
+    steps {
+        script {
+            def commit = sh(
+                script: "git rev-parse HEAD",
+                returnStdout: true
+            ).trim()
+
+            sh """
+              mkdir -p logs
+              echo ${commit} > logs/git-commit.txt
+            """
+
+            echo "📌 Captured Git Commit: ${commit}"
+        }
+    }
+}
+
+
         /* ---------------------------------------------------------
            Verify Git
            --------------------------------------------------------- */
@@ -190,14 +209,36 @@ pipeline {
                         returnStdout: true
                     ).trim()
                     
-                    if (gitHashExists != 'true') {
-                        error("❌ Cannot find Git commit hash for Build #${targetBuildNumber}. Build may be too old or archive missing.")
-                    }
+                    def targetGitHash = ''
                     
-                    def targetGitHash = sh(
-                        script: "cat '${gitHashFile}' | head -n 1",
-                        returnStdout: true
-                    ).trim()
+                    if (gitHashExists == 'true') {
+                        targetGitHash = sh(
+                            script: "cat '${gitHashFile}' | head -n 1",
+                            returnStdout: true
+                        ).trim()
+                    } else {
+                        echo "⚠️  Warning: Git commit hash file not found for Build #${targetBuildNumber}"
+                        echo "This build was created before rollback feature was implemented."
+                        echo ""
+                        
+                        // Prompt user to manually enter git commit hash
+                        targetGitHash = input(
+                            message: "Enter the Git commit hash to rollback to:",
+                            parameters: [
+                                string(
+                                    name: 'COMMIT_HASH',
+                                    defaultValue: '',
+                                    description: 'Git commit SHA (find it in build logs or Git history)'
+                                )
+                            ]
+                        )
+                        
+                        if (!targetGitHash || targetGitHash.trim().isEmpty()) {
+                            error("❌ No Git commit hash provided. Cannot proceed with rollback.")
+                        }
+                        
+                        targetGitHash = targetGitHash.trim()
+                    }
                     
                     echo ''
                     echo '📋 Rollback Details:'
@@ -726,7 +767,7 @@ Approve deployment?
             }
             post {
                 always {
-                    archiveArtifacts artifacts: 'logs/**/*,*.json', allowEmptyArchive: true
+                    archiveArtifacts artifacts: 'logs/**/*,*.json,', allowEmptyArchive: true
                 }
             }
         }
