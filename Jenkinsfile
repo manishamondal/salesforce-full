@@ -667,15 +667,19 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
         }
 
         /* ---------------------------------------------------------
-           Manual Approval
+           Manual Approval (skipped for DEV)
            --------------------------------------------------------- */
         stage('Approve Deployment') {
+            when {
+                expression { params.TARGET_ENV != 'DEV' }
+            }
             steps {
                 timeout(time: 30, unit: 'MINUTES') {
                     input message: """
 Dry-run validation successful.
 
 Deployment details:
+- Environment : ${params.TARGET_ENV}
 - Format : ${params.DEPLOY_FORMAT}
 - Scope  : ${params.DEPLOY_SCOPE}
 - Apex-only : ${params.APEX_CLASSES ?: 'No'}
