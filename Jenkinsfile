@@ -38,6 +38,18 @@ pipeline {
             defaultValue: '',
             description: 'Comma-separated Apex classes (optional)'
         )
+
+        booleanParam(
+            name: 'ROLLBACK_MODE',
+            defaultValue: false,
+            description: 'Enable rollback to previous successful build'
+        )
+
+        string(
+            name: 'ROLLBACK_TO_BUILD',
+            defaultValue: '',
+            description: 'Build number to rollback to (leave empty to select interactively)'
+        )
     }
 
     environment {
@@ -54,6 +66,7 @@ pipeline {
 
         CLEAN_BUILD_STREAK = "0"
         PREVIOUS_BUILD_CLEAN = "false"
+        GIT_COMMIT_HASH = ""
     }
 
     stages {
@@ -78,8 +91,154 @@ pipeline {
            --------------------------------------------------------- */
         stage('Verify Git') {
             steps {
-                sh 'git branch -a'
-                sh 'git log -1'
+                script {
+                    sh 'git branch -a'
+                    sh 'git log -1'
+                    
+                    // Capture current commit hash for tracking
+                    env.GIT_COMMIT_HASH = sh(
+                        script: 'git rev-parse HEAD',
+                        returnStdout: true
+                    ).trim()
+                    
+                    echo "Current Git Commit: ${env.GIT_COMMIT_HASH}"
+                }
+            }
+        }
+
+        /* ---------------------------------------------------------
+           Rollback Handler
+           --------------------------------------------------------- */
+        stage('Rollback') {
+            when {
+                expression { params.ROLLBACK_MODE == true }
+            }
+            steps {
+                script {
+                    echo ''
+                    echo '🔄 ========================================'
+                    echo '🔄  ROLLBACK MODE ACTIVATED'
+                    echo '🔄 ========================================'
+                    echo ''
+                    
+                    def targetBuildNumber = params.ROLLBACK_TO_BUILD
+                    
+                    // If no build number specified, list recent successful builds
+                    if (!targetBuildNumber || targetBuildNumber.trim() == '') {
+                        echo "Fetching recent successful builds..."
+                        
+                        def recentBuilds = []
+                        def build = currentBuild.previousSuccessfulBuild
+                        def count = 0
+                        
+                        while (build != null && count < 10) {
+                            try {
+                                def buildArchive = "${JENKINS_HOME}/jobs/${JOB_NAME}/builds/${build.number}/archive"
+                                def gitHashFile = "${buildArchive}/logs/git-commit.txt"
+                                
+                                def gitHashExists = sh(
+                                    script: "test -f '${gitHashFile}' && echo 'true' || echo 'false'",
+                                    returnStdout: true
+                                ).trim()
+                                
+                                def gitHash = 'unknown'
+                                if (gitHashExists == 'true') {
+                                    gitHash = sh(
+                                        script: "cat '${gitHashFile}' | head -n 1",
+                                        returnStdout: true
+                                    ).trim()
+                                }
+                                
+                                recentBuilds.add("Build #${build.number} (${new Date(build.startTimeInMillis).format('yyyy-MM-dd HH:mm')} - Commit: ${gitHash.take(8)})")
+                            } catch (Exception e) {
+                                recentBuilds.add("Build #${build.number} (${new Date(build.startTimeInMillis).format('yyyy-MM-dd HH:mm')})")
+                            }
+                            
+                            build = build.previousSuccessfulBuild
+                            count++
+                        }
+                        
+                        if (recentBuilds.isEmpty()) {
+                            error('❌ No previous successful builds found for rollback')
+                        }
+                        
+                        echo "Available builds for rollback:"
+                        recentBuilds.each { echo "  - ${it}" }
+                        
+                        def buildChoice = input(
+                            message: 'Select build to rollback to:',
+                            parameters: [
+                                choice(
+                                    name: 'BUILD_SELECTION',
+                                    choices: recentBuilds,
+                                    description: 'Choose a previous successful build'
+                                )
+                            ]
+                        )
+                        
+                        // Extract build number from selection
+                        targetBuildNumber = buildChoice.replaceAll(/.*Build #(\d+).*/, '$1')
+                        echo "Selected Build: #${targetBuildNumber}"
+                    }
+                    
+                    // Retrieve Git commit hash from target build
+                    def targetBuildArchive = "${JENKINS_HOME}/jobs/${JOB_NAME}/builds/${targetBuildNumber}/archive"
+                    def gitHashFile = "${targetBuildArchive}/logs/git-commit.txt"
+                    
+                    def gitHashExists = sh(
+                        script: "test -f '${gitHashFile}' && echo 'true' || echo 'false'",
+                        returnStdout: true
+                    ).trim()
+                    
+                    if (gitHashExists != 'true') {
+                        error("❌ Cannot find Git commit hash for Build #${targetBuildNumber}. Build may be too old or archive missing.")
+                    }
+                    
+                    def targetGitHash = sh(
+                        script: "cat '${gitHashFile}' | head -n 1",
+                        returnStdout: true
+                    ).trim()
+                    
+                    echo ''
+                    echo '📋 Rollback Details:'
+                    echo "   Target Build: #${targetBuildNumber}"
+                    echo "   Git Commit: ${targetGitHash}"
+                    echo "   Current Commit: ${env.GIT_COMMIT_HASH}"
+                    echo ''
+                    
+                    // Final confirmation
+                    input(
+                        message: """⚠️  CONFIRM ROLLBACK
+
+You are about to rollback to Build #${targetBuildNumber}
+Git Commit: ${targetGitHash}
+
+This will:
+1. Checkout the previous commit
+2. Redeploy metadata to Salesforce org
+3. Archive this rollback as a new build
+
+Current deployment will be REPLACED.
+
+Proceed with rollback?""",
+                        ok: 'Yes, Rollback Now'
+                    )
+                    
+                    // Checkout target commit
+                    echo "🔄 Checking out commit ${targetGitHash}..."
+                    sh """
+                    git fetch --all
+                    git checkout ${targetGitHash}
+                    git log -1
+                    """
+                    
+                    // Update environment variable
+                    env.GIT_COMMIT_HASH = targetGitHash
+                    
+                    echo '✅ Successfully checked out target commit'
+                    echo '📦 Proceeding with deployment of rolled-back code...'
+                    echo ''
+                }
             }
         }
 
@@ -490,8 +649,13 @@ Approve deployment?
                     echo "Scope: FULL" >> logs/deployment-summary.txt
                     echo "Test Level: ${params.TEST_LEVEL}" >> logs/deployment-summary.txt
                     echo "Timestamp: \$(date)" >> logs/deployment-summary.txt
+                    echo "Git Commit: ${GIT_COMMIT_HASH}" >> logs/deployment-summary.txt
                     echo "" >> logs/deployment-summary.txt
-                    echo "Rollback: Use previous successful deployment or Git revert" >> logs/deployment-summary.txt
+                    echo "Rollback Instructions:" >> logs/deployment-summary.txt
+                    echo "1. Click 'Build with Parameters'" >> logs/deployment-summary.txt
+                    echo "2. Check 'ROLLBACK_MODE'" >> logs/deployment-summary.txt
+                    echo "3. Select this build (#${BUILD_NUMBER}) or any previous build" >> logs/deployment-summary.txt
+                    echo "4. Click 'Build' to initiate rollback" >> logs/deployment-summary.txt
                     
                     cat logs/deployment-summary.txt
                     """
@@ -638,6 +802,9 @@ Approve deployment?
                 echo "success" > logs/build-status.txt
                 echo "Build ${BUILD_NUMBER} completed successfully at \$(date)" >> logs/build-status.txt
                 echo "" >> logs/build-status.txt
+                
+                # Store git commit hash for rollback capability
+                echo "${GIT_COMMIT_HASH}" > logs/git-commit.txt
                 
                 # Store streak for next build
                 echo "${newStreak}" > logs/sca-streak.txt
