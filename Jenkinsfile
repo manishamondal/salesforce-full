@@ -74,6 +74,7 @@ pipeline {
         CLEAN_BUILD_STREAK = "0"
         PREVIOUS_BUILD_CLEAN = "false"
         GIT_COMMIT_HASH = ""
+        BASELINE_TAG = 'baseline-last-success'
     }
 
     stages {
@@ -546,11 +547,10 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
                     echo "Comparing ${env.BASELINE_TAG} to HEAD..."
                     
                     "${SF}" sgd:source:delta \
-                      --to HEAD \
-                      --from "${env.BASELINE_TAG}" \
-                      --output "${DELTA_DIR}" \
-                      --generate-delta \
-                      --source force-app
+  --from "${env.BASELINE_TAG}" \
+  --to HEAD \
+  --output-dir "${DELTA_DIR}" \
+  --source-dir force-app
                     
                     echo ""
                     echo "Delta package generated in ${DELTA_DIR}"
