@@ -17,8 +17,17 @@ pipeline {
 
         stage('Checkout') {
             steps {
-                echo '📥 Checking out source code'
-                git branch: "${BRANCH_NAME}", url: "${REPO_URL}"
+                echo '📥 Checking out source code (main branch)'
+
+                // Explicit refspec to avoid Jenkins defaulting to master
+                git(
+                    url: "${REPO_URL}",
+                    branch: "${BRANCH_NAME}",
+                    changelog: false,
+                    poll: false
+                )
+
+                sh 'git branch'
             }
         }
 
@@ -39,20 +48,20 @@ pipeline {
             steps {
                 script {
                     def tagExists = sh(
-                        script: "git tag -l ${env.BASELINE_TAG}",
+                        script: "git tag -l ${BASELINE_TAG}",
                         returnStdout: true
                     ).trim()
 
                     if (tagExists) {
                         env.BASELINE_COMMIT = sh(
-                            script: "git rev-list -n 1 ${env.BASELINE_TAG}",
+                            script: "git rev-list -n 1 ${BASELINE_TAG}",
                             returnStdout: true
                         ).trim()
-                        echo "🔖 Baseline found: ${env.BASELINE_COMMIT}"
+                        echo "🔖 Baseline found at commit: ${env.BASELINE_COMMIT}"
                     } else {
                         env.BASELINE_COMMIT = env.CURRENT_COMMIT
-                        echo "⚠️ No baseline tag found (first run)"
-                        echo "➡️ Delta will behave as FULL deployment"
+                        echo "⚠️ Baseline tag not found (first run)"
+                        echo "➡️ Treating this as FULL deployment"
                     }
                 }
             }
