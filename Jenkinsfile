@@ -277,7 +277,7 @@ Proceed with rollback?""",
                     echo "🔄 Checking out commit ${targetGitHash}..."
                     sh """
                     git fetch --all
-                    git checkout ${targetGitHash}
+                    git checkout -f ${targetGitHash}
                     git log -1
                     """
                     
@@ -361,10 +361,13 @@ Proceed with rollback?""",
                         env.SF_ALIAS = 'CICD_DevHub'
                         env.SF_USERNAME_CRED = 'sfdx_username'
                         env.SF_CLIENT_ID_CRED = 'sfdx_client_id'
+                        env.SF_JWT_KEY_CRED = 'sfdx_jwt_key'
                     } else if (params.TARGET_ENV == 'QA') {
                         env.SF_ALIAS = 'CICD_QA'
                         env.SF_USERNAME_CRED = 'sfdx_username_qa'
                         env.SF_CLIENT_ID_CRED = 'sfdx_client_id_qa'
+                        env.SF_JWT_KEY_CRED = 'sfdx_jwt_key'
+                        env.SF_JWT_KEY_CRED = 'sfdx_jwt_key_qa'
                     }
 
                     echo """
@@ -383,7 +386,7 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
         stage('Authenticate to Salesforce') {
             steps {
                 withCredentials([
-                    file(credentialsId: 'sfdx_jwt_key', variable: 'JWT_KEY_FILE'),
+                  file(credentialsId: "${env.SF_JWT_KEY_CRED}", variable: 'JWT_KEY_FILE'),
                     string(credentialsId: "${env.SF_CLIENT_ID_CRED}", variable: 'CLIENT_ID'),
                     string(credentialsId: "${env.SF_USERNAME_CRED}", variable: 'SF_USERNAME')
                 ]) {
