@@ -1,4 +1,4 @@
-#old delta code
+
 pipeline {
     agent any
 
