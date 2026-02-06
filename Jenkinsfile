@@ -70,19 +70,19 @@ pipeline {
         stage('Authenticate to Salesforce') {
             steps {
                 withCredentials([
-                    file(credentialsId: 'jwt_key_file', variable: 'JWT_KEY_FILE'),
-                    string(credentialsId: 'sfdx_client_id', variable: 'CLIENT_ID'),
-                    string(credentialsId: 'sfdx_username', variable: 'SF_USERNAME')
+                    file(credentialsId: 'sfdx_jwt_key', variable: 'JWT_KEY_FILE'),
+                    string(credentialsId: "${env.SF_CLIENT_ID_CRED}", variable: 'CLIENT_ID'),
+                    string(credentialsId: "${env.SF_USERNAME_CRED}", variable: 'SF_USERNAME')
                 ]) {
-                    sh """
-                        "${SF_CLI}" org login jwt \
-                          --client-id "$CLIENT_ID" \
-                          --jwt-key-file "$JWT_KEY_FILE" \
-                          --username "$SF_USERNAME" \
-                          --instance-url https://login.salesforce.com \
-                          --alias CICD_DevHub \
-                          --set-default
-                    """
+                     sh '''
+                    "$SF" org login jwt \
+                      --client-id "$CLIENT_ID" \
+                      --jwt-key-file "$JWT_KEY_FILE" \
+                      --username "$SF_USERNAME" \
+                      --instance-url "$INSTANCE_URL" \
+                      --alias "$SF_ALIAS" \
+                      --set-default
+                    '''
                 }
             }
         }
