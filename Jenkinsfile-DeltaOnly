@@ -300,6 +300,7 @@ stage('Deploy') {
                 echo "Skipping validation – delta empty"
                 return
             }
+}
         sh """
             "$SF" project deploy start \
               --manifest ${DELTA_DIR}/package/package.xml \
