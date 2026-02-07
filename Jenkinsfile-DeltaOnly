@@ -17,33 +17,9 @@ pipeline {
         /* ================================================= */
 
         choice(
-            name: 'DEPLOY_FORMAT',
-            choices: ['SOURCE', 'MDAPI'],
-            description: 'Deployment format'
-        )
-
-        choice(
-            name: 'DEPLOY_SCOPE',
-            choices: ['FULL', 'DELTA'],
-            description: 'Deployment scope - FULL or DELTA (from baseline tag)'
-        )
-
-        choice(
             name: 'TEST_LEVEL',
             choices: ['NoTestRun', 'RunLocalTests'],
             description: 'Salesforce test level'
-        )
-
-        string(
-            name: 'PACKAGE_XML_PATH',
-            defaultValue: 'manifest/package.xml',
-            description: 'package.xml path (MDAPI only)'
-        )
-
-        string(
-            name: 'APEX_CLASSES',
-            defaultValue: '',
-            description: 'Comma-separated Apex classes (optional)'
         )
 
         booleanParam(
@@ -62,6 +38,10 @@ pipeline {
     environment {
         SF              = "/c/Program Files/sf/bin/sf"
         INSTANCE_URL    = "https://login.salesforce.com"
+        DEPLOY_FORMAT   = "SOURCE"
+        PACKAGE_XML_PATH = "manifest/package.xml"
+        APEX_CLASSES    = ""
+        DEPLOY_SCOPE    = "DELTA"
 
         DELTA_DIR       = "delta"
         SCA_DIR         = "sca-reports"
