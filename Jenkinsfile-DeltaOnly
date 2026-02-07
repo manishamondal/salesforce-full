@@ -27,7 +27,11 @@ pipeline {
             defaultValue: false,
             description: 'Enable rollback to previous successful build'
         )
-
+booleanParam(
+    name: 'DESTRUCTIVE_MODE',
+    defaultValue: false,
+    description: 'Enable destructive deployment'
+)
         string(
             name: 'ROLLBACK_TO_BUILD',
             defaultValue: '',
@@ -788,7 +792,28 @@ Approve deployment?
                 }
             }
         }
-        
+
+stage('Destructive Deployment') {
+    when {
+        expression { params.DESTRUCTIVE_MODE == true }
+    }
+    steps {
+        script {
+
+            echo "Starting Destructive Deployment..."
+
+            sh """
+            "$SF" project deploy start \
+            --manifest manifest/package.xml \
+            --post-destructive-changes manifest/destructiveChanges.xml \
+            --target-org "$SF_ALIAS" \
+            --wait 20 \
+            --test-level NoTestRun
+            """
+
+        }
+    }
+}
         /* ---------------------------------------------------------
            Post-Deployment Validation
            --------------------------------------------------------- */
