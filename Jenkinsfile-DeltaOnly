@@ -116,7 +116,9 @@ stage('Verify Git Workspace') {
 stage('Capture Git Commit') {
     steps {
         sh '''
+            rm -f .git_head
             git rev-parse HEAD > .git_head
+            echo "Git HEAD written to file:"
             cat .git_head
         '''
 
