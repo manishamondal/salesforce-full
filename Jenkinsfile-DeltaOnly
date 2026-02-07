@@ -80,18 +80,41 @@ pipeline {
         /* =========================================================
            Checkout
            ========================================================= */
-        stage('Checkout') {
-            steps {
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: "*/${env.GIT_BRANCH}"]],
-                    userRemoteConfigs: [[
-                        url: 'https://github.com/manishamondal/salesforce-full.git',
-                        credentialsId: 'supercred'
-                    ]]
-                ])
+stage('Checkout') {
+    steps {
+        checkout([
+            $class: 'GitSCM',
+            branches: [[name: "*/${env.GIT_BRANCH}"]],
+            extensions: [
+                [$class: 'CloneOption', shallow: false, depth: 0, noTags: false]
+            ],
+            userRemoteConfigs: [[
+                url: 'https://github.com/manishamondal/salesforce-full.git',
+                credentialsId: 'supercred'
+            ]]
+        ])
+    }
+}
+
+
+stage('Capture Git Commit') {
+    steps {
+        script {
+            env.GIT_HEAD = sh(
+                script: 'git rev-parse HEAD',
+                returnStdout: true
+            ).trim()
+
+            if (!env.GIT_HEAD || env.GIT_HEAD == 'null') {
+                error "❌ GIT_HEAD could not be resolved. Git checkout is invalid."
             }
+
+            env.GIT_COMMIT_HASH = env.GIT_HEAD
+
+            echo "✅ Git HEAD resolved: ${env.GIT_HEAD}"
         }
+    }
+}
 
         /* =========================================================
            Capture Git Commit
@@ -156,24 +179,41 @@ pipeline {
             }
         }
 
+stage('Verify Baseline Tag Exists') {
+    steps {
+        sh """
+            git rev-parse ${env.BASELINE_TAG} >/dev/null 2>&1 \
+            || (echo "❌ Baseline tag ${env.BASELINE_TAG} not found" && exit 1)
+        """
+    }
+}
+
         /* =========================================================
            Generate Delta
            ========================================================= */
-        stage('Generate Delta') {
-            steps {
-                script {
-                    sh """
-                        mkdir -p delta
-                        "$SF" sgd:source:delta \
-                          --from ${env.BASELINE_TAG} \
-                          --to ${env.GIT_HEAD} \
-                          --output delta \
-                          --generate-delta \
-                          --source force-app
-                    """
-                }
+stage('Generate Delta') {
+    steps {
+        script {
+
+            sh 'git fetch --tags'
+
+            if (!env.GIT_HEAD?.trim()) {
+                error "❌ GIT_HEAD is null — cannot generate delta"
             }
+
+            sh """
+                mkdir -p delta
+                "$SF" sgd:source:delta \
+                  --from ${env.BASELINE_TAG} \
+                  --to ${env.GIT_HEAD} \
+                  --output-dir delta \
+                  --generate-delta \
+                  --source-dir force-app
+            """
         }
+    }
+}
+
 
         /* =========================================================
            Check Delta Content
