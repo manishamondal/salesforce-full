@@ -97,6 +97,10 @@ stage('Checkout') {
 }
 
 
+
+        /* =========================================================
+           Capture Git Commit
+           ========================================================= */
 stage('Capture Git Commit') {
     steps {
         script {
@@ -115,23 +119,6 @@ stage('Capture Git Commit') {
         }
     }
 }
-
-        /* =========================================================
-           Capture Git Commit
-           ========================================================= */
-        stage('Capture Git Commit') {
-            steps {
-                script {
-                    env.GIT_HEAD = sh(
-                        script: 'git rev-parse HEAD',
-                        returnStdout: true
-                    ).trim()
-
-                    env.GIT_COMMIT_HASH = env.GIT_HEAD
-                    echo "Captured Git Commit: ${env.GIT_HEAD}"
-                }
-            }
-        }
 
         /* =========================================================
            Salesforce Authentication (JWT)
