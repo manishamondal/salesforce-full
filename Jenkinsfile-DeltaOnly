@@ -115,18 +115,17 @@ stage('Verify Git Workspace') {
            ========================================================= */
 stage('Capture Git Commit') {
     steps {
+        sh '''
+            git rev-parse HEAD > .git_head
+            cat .git_head
+        '''
+
         script {
-            env.GIT_HEAD = sh(
-                script: 'bash -lc "git rev-parse HEAD"',
-                returnStdout: true
-            ).trim()
-
-            if (!env.GIT_HEAD) {
-                error "❌ Failed to capture Git HEAD"
-            }
-
-            echo "📌 Captured Git Commit: ${env.GIT_HEAD}"
+            env.GIT_HEAD = readFile('.git_head').trim()
+            env.GIT_COMMIT_HASH = env.GIT_HEAD
         }
+
+        echo "📌 Captured Git Commit: ${env.GIT_HEAD}"
     }
 }
 
