@@ -73,8 +73,9 @@ pipeline {
         CLEAN_BUILD_STREAK = "0"
         PREVIOUS_BUILD_CLEAN = "false"
         GIT_COMMIT_HASH = ""
-           // ✅ BASELINE TAG (ENV AWARE)
-        BASELINE_TAG = "baseline-${TARGET_ENV}"
+        
+        // Add baseline tag definition
+        BASELINE_TAG    = "baseline-prod"
     }
 
     stages {
@@ -94,23 +95,23 @@ pipeline {
             }
         }
 
-stage('Capture Git Commit') {
-    steps {
-        script {
-            def commit = sh(
-                script: "git rev-parse HEAD",
-                returnStdout: true
-            ).trim()
+        stage('Capture Git Commit') {
+            steps {
+                script {
+                    def commit = sh(
+                        script: "git rev-parse HEAD",
+                        returnStdout: true
+                    ).trim()
 
-            sh """
-              mkdir -p logs
-              echo ${commit} > logs/git-commit.txt
-            """
+                    sh """
+                      mkdir -p logs
+                      echo ${commit} > logs/git-commit.txt
+                    """
 
-            echo "📌 Captured Git Commit: ${commit}"
+                    echo "📌 Captured Git Commit: ${commit}"
+                }
+            }
         }
-    }
-}
 
 
         /* ---------------------------------------------------------
@@ -127,10 +128,7 @@ stage('Capture Git Commit') {
                         script: 'git rev-parse HEAD',
                         returnStdout: true
                     ).trim()
-                     sh """
-                    mkdir -p logs
-                    echo ${env.GIT_COMMIT_HASH} > logs/git-commit.txt
-                    """
+                    
                     echo "Current Git Commit: ${env.GIT_COMMIT_HASH}"
                 }
             }
@@ -404,18 +402,6 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
         }
 
         /* ---------------------------------------------------------
-           Install Plugins
-           --------------------------------------------------------- */
-        // stage('Install Plugins') {
-        //     steps {
-        //         sh '''
-        //         echo y | "$SF" plugins install sfdx-git-delta || true
-        //         "$SF" plugins install @salesforce/sfdx-scanner || true
-        //         '''
-        //     }
-        // }
-
-        /* ---------------------------------------------------------
            Static Code Analysis (ALL Deployments)
            --------------------------------------------------------- */
         stage('Static Code Analysis') {
@@ -543,6 +529,26 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
                     echo "Baseline Tag: ${env.BASELINE_TAG}"
                     echo "Current HEAD: ${env.GIT_COMMIT_HASH}"
                     
+                    // Check if baseline tag exists, if not create it
+                    def tagExists = sh(
+                        script: "git tag -l '${env.BASELINE_TAG}'",
+                        returnStdout: true
+                    ).trim()
+                    
+                    if (!tagExists) {
+                        echo "⚠️  Baseline tag '${env.BASELINE_TAG}' does not exist."
+                        echo "Creating baseline tag at current HEAD for future delta deployments..."
+                        sh """
+                        git tag -a "${env.BASELINE_TAG}" -m "Initial baseline tag created by Jenkins Build #${BUILD_NUMBER}"
+                        """
+                        echo "✅ Baseline tag created. This build will proceed as FULL deployment."
+                        echo "Future DELTA deployments will compare against this baseline."
+                        
+                        // Skip delta generation for first run
+                        env.SKIP_DELTA = "true"
+                        return
+                    }
+                    
                     sh """
                     mkdir -p "${DELTA_DIR}"
                     
@@ -607,7 +613,7 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
                         return
                     }
 
-                    if (params.DEPLOY_SCOPE == 'DELTA') {
+                    if (params.DEPLOY_SCOPE == 'DELTA' && env.SKIP_DELTA != 'true') {
                         sh """
                         rm -rf .sf .sfdx
                         "$SF" project deploy start \
@@ -633,7 +639,7 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
                         return
                     }
 
-                    // FULL deployment only
+                    // FULL deployment only (or first DELTA run)
                     sh """
                     rm -rf .sf .sfdx
                     "$SF" project deploy start \
@@ -727,7 +733,7 @@ Approve deployment?
                         return
                     }
 
-                    if (params.DEPLOY_SCOPE == 'DELTA') {
+                    if (params.DEPLOY_SCOPE == 'DELTA' && env.SKIP_DELTA != 'true') {
                         sh """
                         rm -rf .sf .sfdx
                         "$SF" project deploy start \
@@ -754,7 +760,7 @@ Approve deployment?
                         return
                     }
 
-                    // FULL deployment only
+                    // FULL deployment only (or first DELTA run)
                     sh """
                     rm -rf .sf .sfdx
                     "$SF" project deploy start \
