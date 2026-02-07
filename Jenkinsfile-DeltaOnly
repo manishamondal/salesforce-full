@@ -99,9 +99,22 @@ stage('Checkout') {
 stage('Verify Git Workspace') {
     steps {
         sh '''
-            set -e
-            test -d .git
-            git rev-parse --is-inside-work-tree
+            echo "Current directory:"
+            pwd
+
+            echo "Listing workspace:"
+            ls -la
+
+            echo "Checking Git repo:"
+            if [ ! -d .git ]; then
+              echo "❌ .git directory not found"
+              exit 1
+            fi
+
+            echo "Git inside work tree:"
+            git rev-parse --is-inside-work-tree || exit 1
+
+            echo "✅ Git workspace verified"
         '''
     }
 }
@@ -114,22 +127,20 @@ stage('Verify Git Workspace') {
 stage('Capture Git Commit') {
     steps {
         script {
-            env.GIT_HEAD = sh(
+            def gitOutput = sh(
                 script: '''
-                    set -e
-                    pwd
-                    ls -la
-                    git status
                     git rev-parse HEAD
                 ''',
                 returnStdout: true
-            ).trim().split('\n').last()
+            ).trim()
 
-            if (!env.GIT_HEAD || env.GIT_HEAD == 'null') {
-                error "❌ GIT_HEAD could not be resolved. Git checkout is invalid."
+            if (!gitOutput) {
+                error "❌ Unable to resolve Git HEAD"
             }
 
-            env.GIT_COMMIT_HASH = env.GIT_HEAD
+            env.GIT_HEAD = gitOutput
+            env.GIT_COMMIT_HASH = gitOutput
+
             echo "✅ Git HEAD resolved: ${env.GIT_HEAD}"
         }
     }
