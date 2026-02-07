@@ -40,7 +40,6 @@ pipeline {
         INSTANCE_URL    = "https://login.salesforce.com"
         DEPLOY_FORMAT   = "SOURCE"
         PACKAGE_XML_PATH = "manifest/package.xml"
-        APEX_CLASSES    = ""
         DEPLOY_SCOPE    = "DELTA"
 
         DELTA_DIR       = "delta"
