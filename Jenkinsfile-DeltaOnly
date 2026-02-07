@@ -116,19 +116,16 @@ stage('Verify Git Workspace') {
 stage('Capture Git Commit') {
     steps {
         script {
-            def gitOutput = bat(
-                script: 'git rev-parse HEAD',
+            env.GIT_HEAD = sh(
+                script: 'bash -lc "git rev-parse HEAD"',
                 returnStdout: true
             ).trim()
 
-            if (!gitOutput || gitOutput == 'null') {
-                error "❌ Unable to resolve Git HEAD. Not running inside Git workspace."
+            if (!env.GIT_HEAD) {
+                error "❌ Failed to capture Git HEAD"
             }
 
-            env.GIT_HEAD = gitOutput
-            env.GIT_COMMIT_HASH = gitOutput
-
-            echo "✅ Git HEAD resolved: ${env.GIT_HEAD}"
+            echo "📌 Captured Git Commit: ${env.GIT_HEAD}"
         }
     }
 }
