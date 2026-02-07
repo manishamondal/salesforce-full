@@ -273,21 +273,17 @@ stage('Validate Deployment') {
            Deploy Delta
            ========================================================= */
 stage('Deploy') {
+    when {
+        expression { env.DELTA_EMPTY != 'true' }
+    }
     steps {
-        script {
-            if (env.DELTA_EMPTY == 'true') {
-                echo "✅ No-op deployment – nothing to deploy"
-                return
-            }
-
-            sh """
-                "$SF" project deploy start \
-                  --manifest ${DELTA_DIR}/package/package.xml \
-                  --target-org "$SF_ALIAS" \
-                  --test-level "$TEST_LEVEL" \
-                  --wait 60
-            """
-        }
+        sh """
+            "$SF" project deploy start \
+              --manifest ${DELTA_DIR}/package/package.xml \
+              --target-org "$SF_ALIAS" \
+              --test-level "$TEST_LEVEL" \
+              --wait 60
+        """
     }
 }
 
