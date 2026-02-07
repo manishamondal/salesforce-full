@@ -7,7 +7,6 @@ pipeline {
     }
 
     parameters {
-
         choice(
             name: 'TARGET_ENV',
             choices: ['DEV', 'QA'],
@@ -36,27 +35,19 @@ pipeline {
     environment {
         SF              = "/c/Program Files/sf/bin/sf"
         INSTANCE_URL    = "https://login.salesforce.com"
-
         DELTA_DIR       = "delta"
         SCA_DIR         = "sca-reports"
-
         SCA_THRESHOLD_HIGH      = "0"
         SCA_THRESHOLD_CRITICAL = "0"
-
         BUILD_METRICS   = "build-metrics.json"
-
         CLEAN_BUILD_STREAK      = "0"
         PREVIOUS_BUILD_CLEAN    = "false"
-
         GIT_COMMIT_HASH = ""
         DELTA_EMPTY     = "false"
     }
 
     stages {
 
-        /* =========================================================
-           Select Git Branch & Baseline
-           ========================================================= */
         stage('Select Git Branch') {
             steps {
                 script {
@@ -70,44 +61,38 @@ pipeline {
                         env.SF_ALIAS     = 'QA'
                     }
 
-                    echo "Git Branch   : ${env.GIT_BRANCH}"
-                    echo "Baseline Tag : ${env.BASELINE_TAG}"
+                    echo "✅ Git branch selected: ${env.GIT_BRANCH}"
+                    echo "✅ Baseline tag: ${env.BASELINE_TAG}"
                 }
             }
         }
 
-        /* =========================================================
-           Checkout
-           ========================================================= */
         stage('Checkout') {
-    steps {
-        checkout([
-            $class: 'GitSCM',
-            branches: [[name: "*/${env.GIT_BRANCH}"]],
-            userRemoteConfigs: [[
-                url: 'https://github.com/manishamondal/salesforce-full.git',
-                credentialsId: 'supercred'
-            ]]
-        ])
-    }
-}
-
-
-stage('Capture Git Commit') {
-    steps {
-        script {
-            env.GIT_HEAD = sh(
-                script: 'git rev-parse HEAD',
-                returnStdout: true
-            ).trim()
-
-            echo "📌 Captured Git Commit: ${env.GIT_HEAD}"
+            steps {
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "*/${env.GIT_BRANCH}"]],
+                    userRemoteConfigs: [[
+                        url: 'https://github.com/manishamondal/salesforce-full.git',
+                        credentialsId: 'supercred'
+                    ]]
+                ])
+            }
         }
-    }
-}
-        /* =========================================================
-           Salesforce Authentication (JWT)
-           ========================================================= */
+
+        stage('Capture Git Commit') {
+            steps {
+                script {
+                    env.GIT_HEAD = sh(
+                        script: 'git rev-parse HEAD',
+                        returnStdout: true
+                    ).trim()
+
+                    echo "📌 Captured Git Commit: ${env.GIT_HEAD}"
+                }
+            }
+        }
+
         stage('Authenticate to Salesforce') {
             steps {
                 withCredentials([
@@ -115,33 +100,30 @@ stage('Capture Git Commit') {
                     string(credentialsId: 'sfdx_client_id', variable: 'CLIENT_ID'),
                     string(credentialsId: 'sfdx_username', variable: 'SF_USERNAME')
                 ]) {
-                    sh """
-                        "$SF" org login jwt \
-                          --client-id "$CLIENT_ID" \
-                          --jwt-key-file "$JWT_KEY_FILE" \
-                          --username "$SF_USERNAME" \
-                          --instance-url "$INSTANCE_URL" \
-                          --alias "$SF_ALIAS" \
-                          --set-default
-                    """
+                    sh '''
+                    "$SF" org login jwt \
+                      --client-id "$CLIENT_ID" \
+                      --jwt-key-file "$JWT_KEY_FILE" \
+                      --username "$SF_USERNAME" \
+                      --instance-url "$INSTANCE_URL" \
+                      --alias "$SF_ALIAS" \
+                      --set-default
+                    '''
                 }
             }
         }
 
-        /* =========================================================
-           Static Code Analysis
-           ========================================================= */
         stage('Static Code Analysis') {
             steps {
                 sh """
-                    mkdir -p "$SCA_DIR"
-
-                    "$SF" scanner run \
-                      --target force-app \
-                      --format html \
-                      --outfile "$SCA_DIR/sca-report.html" \
-                      --severity-threshold 1 \
-                      --normalize-severity || true
+                mkdir -p "$SCA_DIR"
+                
+                "$SF" scanner run \
+                  --target force-app \
+                  --format html \
+                  --outfile "$SCA_DIR/sca-report.html" \
+                  --severity-threshold 1 \
+                  --normalize-severity || true
                 """
             }
             post {
@@ -151,133 +133,96 @@ stage('Capture Git Commit') {
             }
         }
 
-stage('Verify Baseline Tag Exists') {
-    steps {
-        dir(env.WORKSPACE) {
-            sh '''
-                git rev-parse ${BASELINE_TAG} > .baseline_check
-            '''
-        }
-    }
-}
-
-
-        /* =========================================================
-           Generate Delta
-           ========================================================= */
-stage('Generate Delta') {
-    steps {
-        script {
-            dir(env.WORKSPACE) {
-                sh 'git fetch --tags'
-            }
-
-            if (!env.GIT_HEAD?.trim()) {
-                error "❌ GIT_HEAD is null — cannot generate delta"
-            }
-
-            sh """
-                mkdir -p delta
-                "$SF" sgd:source:delta \
-                  --from ${env.BASELINE_TAG} \
-                  --to ${env.GIT_HEAD} \
-                  --output-dir delta \
-                  --generate-delta \
-                  --source-dir force-app
-            """
-        }
-    }
-}
-
-
-        /* =========================================================
-           Check Delta Content
-           ========================================================= */
-stage('Check Delta Content') {
-    steps {
-        script {
-            if (!fileExists("${DELTA_DIR}/package/package.xml")) {
-                env.DELTA_EMPTY = "true"
-                echo "No delta package generated"
-                return
-            }
-
-            def typesCount = sh(
-                script: "grep -c '<types>' ${DELTA_DIR}/package/package.xml || true",
-                returnStdout: true
-            ).trim().toInteger()
-
-            if (typesCount == 0) {
-                env.DELTA_EMPTY = "true"
-                echo "Delta package empty"
-                return
-            }
-
-            // 🔴 CRITICAL ADDITION
-            def noopCheck = sh(
-                script: """
-                    "$SF" project deploy start \
-                      --manifest ${DELTA_DIR}/package/package.xml \
-                      --target-org "$SF_ALIAS" \
-                      --dry-run \
-                      --wait 30 2>&1 || true
-                """,
-                returnStdout: true
-            )
-
-            if (noopCheck.contains("NothingToDeploy")) {
-                env.DELTA_EMPTY = "true"
-                echo "Org already in sync – no deployment needed"
-            } else {
-                env.DELTA_EMPTY = "false"
+        stage('Verify Baseline Tag Exists') {
+            steps {
+                sh '''
+                git fetch --tags
+                git rev-parse ${BASELINE_TAG}
+                '''
             }
         }
-    }
-}
 
-        /* =========================================================
-           Validate Delta Deployment (Dry Run)
-           ========================================================= */
-stage('Validate Deployment') {
-    steps {
-        script {
-            if (env.DELTA_EMPTY == 'true') {
-                echo "Skipping validation – delta empty"
-                return
+        stage('Generate Delta') {
+            steps {
+                script {
+                    if (!env.GIT_HEAD?.trim()) {
+                        error "❌ GIT_HEAD is null — cannot generate delta"
+                    }
+
+                    sh """
+                        mkdir -p delta
+                        "$SF" sgd:source:delta \
+                          --from ${env.BASELINE_TAG} \
+                          --to ${env.GIT_HEAD} \
+                          --output-dir delta \
+                          --generate-delta \
+                          --source-dir force-app
+                    """
+                }
             }
-
-            def output = sh(
-                script: """
-                    "$SF" project deploy start \
-                      --manifest ${DELTA_DIR}/package/package.xml \
-                      --target-org "$SF_ALIAS" \
-                      --test-level "$TEST_LEVEL" \
-                      --dry-run \
-                      --wait 60 2>&1 || true
-                """,
-                returnStdout: true
-            ).trim()
-
-            echo output
-
-            if (output.contains("NothingToDeploy")) {
-                echo "Nothing to deploy – treating as success"
-                
-                return
-            }
-
-            if (output.contains("Error")) {
-                error "Validation failed"
-            }
-
-            echo "Dry-run validation successful"
         }
-    }
-}
 
-        /* =========================================================
-           Manual Approval (QA only)
-           ========================================================= */
+        stage('Check Delta Content') {
+            steps {
+                script {
+                    if (!fileExists("${DELTA_DIR}/package/package.xml")) {
+                        env.DELTA_EMPTY = "true"
+                        echo "ℹ️ No delta package generated"
+                        return
+                    }
+
+                    def typesCount = sh(
+                        script: "grep -c '<types>' ${DELTA_DIR}/package/package.xml || echo 0",
+                        returnStdout: true
+                    ).trim().toInteger()
+
+                    if (typesCount == 0) {
+                        env.DELTA_EMPTY = "true"
+                        echo "ℹ️ Delta package is empty – nothing to deploy"
+                        return
+                    }
+
+                    env.DELTA_EMPTY = "false"
+                    echo "✅ Delta contains deployable components"
+                }
+            }
+        }
+
+        stage('Validate Deployment') {
+            when {
+                expression { env.DELTA_EMPTY != 'true' }
+            }
+            steps {
+                script {
+                    def output = sh(
+                        script: """
+                            "$SF" project deploy start \
+                              --manifest ${DELTA_DIR}/package/package.xml \
+                              --target-org "$SF_ALIAS" \
+                              --test-level "$TEST_LEVEL" \
+                              --dry-run \
+                              --wait 60 2>&1 || true
+                        """,
+                        returnStdout: true
+                    ).trim()
+
+                    echo output
+
+                    if (output.contains("NothingToDeploy")) {
+                        echo "ℹ️ Nothing to deploy – treating as success"
+                        env.DELTA_EMPTY = "true"
+                        return
+                    }
+
+                    if (output.contains("Error")) {
+                        error "❌ Validation failed"
+                    }
+
+                    echo "✅ Dry-run validation successful"
+                }
+            }
+        }
+
         stage('Approve Deployment') {
             when {
                 allOf {
@@ -290,30 +235,25 @@ stage('Validate Deployment') {
             }
         }
 
-        /* =========================================================
-           Deploy Delta
-           ========================================================= */
-stage('Deploy') {
-    steps {
-        script {
-            if (env.DELTA_EMPTY == 'true') {
-                echo "Skipping validation – delta empty"
-                return
+        stage('Deploy') {
+            when {
+                expression { env.DELTA_EMPTY != 'true' }
             }
-}
-        sh """
-            "$SF" project deploy start \
-              --manifest ${DELTA_DIR}/package/package.xml \
-              --target-org "$SF_ALIAS" \
-              --test-level "$TEST_LEVEL" \
-              --wait 60
-        """
-    }
-}
+            steps {
+                script {
+                    sh """
+                        "$SF" project deploy start \
+                          --manifest ${DELTA_DIR}/package/package.xml \
+                          --target-org "$SF_ALIAS" \
+                          --test-level "$TEST_LEVEL" \
+                          --wait 60
+                    """
+                    
+                    echo "✅ Delta deployment successful"
+                }
+            }
+        }
 
-        /* =========================================================
-           Update Baseline Tag
-           ========================================================= */
         stage('Update Baseline Tag') {
             when {
                 allOf {
@@ -329,25 +269,28 @@ stage('Deploy') {
                         passwordVariable: 'GIT_TOKEN'
                     )
                 ]) {
-                    sh """
-                        git config user.name "jenkins-ci"
-                        git config user.email "jenkins@ci.com"
+                    sh '''
+                    git config user.name "jenkins-ci"
+                    git config user.email "jenkins@ci.com"
 
-                        git tag -f ${BASELINE_TAG}
-                        git push https://${GIT_USER}:${GIT_TOKEN}@github.com/manishamondal/salesforce-full.git \
-                          ${BASELINE_TAG} --force
-                    """
+                    git tag -f ${BASELINE_TAG}
+                    git push https://${GIT_USER}:${GIT_TOKEN}@github.com/manishamondal/salesforce-full.git \
+                      ${BASELINE_TAG} --force
+                    '''
                 }
             }
         }
     }
 
     post {
+        always {
+            archiveArtifacts artifacts: "${SCA_DIR}/**/*,logs/**/*", allowEmptyArchive: true
+        }
         success {
-            echo "✅ Delta deployment successful"
+            echo "✅ Delta deployment pipeline completed successfully"
         }
         failure {
-            echo "❌ Delta deployment failed"
+            echo "❌ Delta deployment pipeline failed"
         }
     }
 }
