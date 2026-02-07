@@ -75,7 +75,7 @@ pipeline {
         GIT_COMMIT_HASH = ""
         
         // Add baseline tag definition
-        BASELINE_TAG    = "baseline-prod"
+        BASELINE_TAG    = "baseline-${TARGET_ENV.toLowerCase()}"
     }
 
     stages {
