@@ -196,20 +196,41 @@ stage('Generate Delta') {
 stage('Check Delta Content') {
     steps {
         script {
-            def pkg = "${DELTA_DIR}/package/package.xml"
-
-            if (!fileExists(pkg)) {
+            if (!fileExists("${DELTA_DIR}/package/package.xml")) {
                 env.DELTA_EMPTY = "true"
-            } else {
-                def typesCount = sh(
-                    script: "grep -c '<types>' ${pkg} || true",
-                    returnStdout: true
-                ).trim().toInteger()
-
-                env.DELTA_EMPTY = (typesCount == 0) ? "true" : "false"
+                echo "No delta package generated"
+                return
             }
 
-            echo "DELTA_EMPTY = ${env.DELTA_EMPTY}"
+            def typesCount = sh(
+                script: "grep -c '<types>' ${DELTA_DIR}/package/package.xml || true",
+                returnStdout: true
+            ).trim().toInteger()
+
+            if (typesCount == 0) {
+                env.DELTA_EMPTY = "true"
+                echo "Delta package empty"
+                return
+            }
+
+            // 🔴 CRITICAL ADDITION
+            def noopCheck = sh(
+                script: """
+                    "$SF" project deploy start \
+                      --manifest ${DELTA_DIR}/package/package.xml \
+                      --target-org "$SF_ALIAS" \
+                      --dry-run \
+                      --wait 30 2>&1 || true
+                """,
+                returnStdout: true
+            )
+
+            if (noopCheck.contains("NothingToDeploy")) {
+                env.DELTA_EMPTY = "true"
+                echo "Org already in sync – no deployment needed"
+            } else {
+                env.DELTA_EMPTY = "false"
+            }
         }
     }
 }
@@ -241,7 +262,7 @@ stage('Validate Deployment') {
 
             if (output.contains("NothingToDeploy")) {
                 echo "Nothing to deploy – treating as success"
-                env.DELTA_EMPTY = "true"
+                
                 return
             }
 
