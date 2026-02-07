@@ -422,9 +422,6 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
                 script {
                     def scanDir = 'force-app'
                     
-                    if (params.APEX_CLASSES.trim()) {
-                        scanDir = 'force-app/main/default/classes'
-                    }
                     
                     sh """
                     mkdir -p "$SCA_DIR"
