@@ -73,6 +73,8 @@ pipeline {
         CLEAN_BUILD_STREAK = "0"
         PREVIOUS_BUILD_CLEAN = "false"
         GIT_COMMIT_HASH = ""
+           // ✅ BASELINE TAG (ENV AWARE)
+        BASELINE_TAG = "baseline-${TARGET_ENV}"
     }
 
     stages {
