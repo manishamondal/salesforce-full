@@ -203,7 +203,7 @@ stage('Check Delta Content') {
             }
 
             def typesCount = sh(
-                script: "grep -c '<types>' ${DELTA_DIR}/package/package.xml || true",
+                script: "grep -c '<types>' ${DELTA_DIR}/package/package.xml || echo 0",
                 returnStdout: true
             ).trim().toInteger()
 
