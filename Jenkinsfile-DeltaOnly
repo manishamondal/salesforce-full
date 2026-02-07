@@ -116,19 +116,23 @@ stage('Verify Git Workspace') {
 stage('Capture Git Commit') {
     steps {
         script {
-            def gitOutput = bat(
-                script: 'git rev-parse HEAD',
-                returnStdout: true
-            ).trim()
+            dir(env.WORKSPACE) {
 
-            if (!gitOutput) {
-                error "❌ Unable to resolve Git HEAD via bat"
+                sh '''
+                    git rev-parse HEAD > .git_head
+                '''
+
+                def gitOutput = readFile('.git_head').trim()
+
+                if (!gitOutput) {
+                    error "❌ Unable to resolve Git HEAD from file"
+                }
+
+                env.GIT_HEAD = gitOutput
+                env.GIT_COMMIT_HASH = gitOutput
+
+                echo "✅ Git HEAD resolved: ${env.GIT_HEAD}"
             }
-
-            env.GIT_HEAD = gitOutput
-            env.GIT_COMMIT_HASH = gitOutput
-
-            echo "✅ Git HEAD resolved: ${env.GIT_HEAD}"
         }
     }
 }
@@ -181,12 +185,14 @@ stage('Capture Git Commit') {
 
 stage('Verify Baseline Tag Exists') {
     steps {
-        sh """
-            git rev-parse ${env.BASELINE_TAG} >/dev/null 2>&1 \
-            || (echo "❌ Baseline tag ${env.BASELINE_TAG} not found" && exit 1)
-        """
+        dir(env.WORKSPACE) {
+            sh '''
+                git rev-parse ${BASELINE_TAG} > .baseline_check
+            '''
+        }
     }
 }
+
 
         /* =========================================================
            Generate Delta
@@ -194,8 +200,9 @@ stage('Verify Baseline Tag Exists') {
 stage('Generate Delta') {
     steps {
         script {
-
-            sh 'git fetch --tags'
+            dir(env.WORKSPACE) {
+                sh 'git fetch --tags'
+            }
 
             if (!env.GIT_HEAD?.trim()) {
                 error "❌ GIT_HEAD is null — cannot generate delta"
