@@ -422,9 +422,7 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
                 script {
                     def scanDir = 'force-app'
                     
-                    if (params.APEX_CLASSES.trim()) {
-                        scanDir = 'force-app/main/default/classes'
-                    }
+
                     
                     sh """
                     mkdir -p "$SCA_DIR"
@@ -609,24 +607,6 @@ stage('Check Delta Content') {
 }
 
 
-                    if (params.APEX_CLASSES.trim()) {
-                        def classPaths = params.APEX_CLASSES
-                            .split(',')
-                            .collect { it.trim() }
-                            .collect { "force-app/main/default/classes/${it}.cls" }
-                            .join(',')
-
-                        sh """
-                        rm -rf .sf .sfdx
-                        "$SF" project deploy start \
-                          --source-dir ${classPaths} \
-                          --target-org "$SF_ALIAS" \
-                          --test-level "$TEST_LEVEL" \
-                          --dry-run \
-                          --wait 60
-                        """
-                        return
-                    }
 
                     if (params.DEPLOY_SCOPE == 'DELTA') {
                         sh """
@@ -694,7 +674,6 @@ Dry-run validation successful.
 Deployment details:
 - Environment : ${params.TARGET_ENV}
 - Scope  : ${params.DEPLOY_SCOPE}
-- Apex-only : ${params.APEX_CLASSES ?: 'No'}
 
 Approve deployment?
 """,
@@ -724,23 +703,6 @@ Approve deployment?
 }
 
 
-                    if (params.APEX_CLASSES.trim()) {
-                        def classPaths = params.APEX_CLASSES
-                            .split(',')
-                            .collect { it.trim() }
-                            .collect { "force-app/main/default/classes/${it}.cls" }
-                            .join(',')
-
-                        sh """
-                        rm -rf .sf .sfdx
-                        "$SF" project deploy start \
-                          --source-dir ${classPaths} \
-                          --target-org "$SF_ALIAS" \
-                          --test-level "$TEST_LEVEL" \
-                          --wait 60
-                        """
-                        return
-                    }
 
                     if (params.DEPLOY_SCOPE == 'DELTA') {
                         sh """
@@ -929,7 +891,6 @@ Approve deployment?
                 echo "Configuration:" >> logs/pipeline-summary.txt
                 echo "  - Deploy Scope: ${params.DEPLOY_SCOPE}" >> logs/pipeline-summary.txt
                 echo "  - Test Level: ${params.TEST_LEVEL}" >> logs/pipeline-summary.txt
-                echo "  - Apex Classes: ${params.APEX_CLASSES ?: 'All'}" >> logs/pipeline-summary.txt
                 echo "  - Target Org Alias: ${SF_ALIAS}" >> logs/pipeline-summary.txt
 
                 echo "" >> logs/pipeline-summary.txt
