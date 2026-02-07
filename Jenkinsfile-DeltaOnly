@@ -49,7 +49,6 @@ pipeline {
         PREVIOUS_BUILD_CLEAN    = "false"
 
         GIT_COMMIT_HASH = ""
-        GIT_HEAD        = ""
         DELTA_EMPTY     = "false"
     }
 
