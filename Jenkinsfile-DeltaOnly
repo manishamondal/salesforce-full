@@ -295,7 +295,6 @@ Proceed with rollback?""",
 
         /* ---------------------------------------------------------
            Check Previous Build SCA (UNCHANGED)
-           --------------------------------------------------------- */
         stage('Check SCA History') {
             steps {
                 script {
@@ -350,6 +349,7 @@ Proceed with rollback?""",
                 }
             }
         }
+           --------------------------------------------------------- */
 
         /* =========================================================
            NEW STAGE – Environment Configuration
@@ -417,7 +417,6 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
 
         /* ---------------------------------------------------------
            Static Code Analysis (ALL Deployments)
-           --------------------------------------------------------- */
         stage('Static Code Analysis') {
             steps {
                 script {
@@ -530,6 +529,7 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
             }
         }
 				
+           --------------------------------------------------------- */
 
         /* ---------------------------------------------------------
            Generate Delta Package (if DELTA scope)
