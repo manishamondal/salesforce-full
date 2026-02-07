@@ -475,7 +475,6 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
                     echo "=== Static Code Analysis Summary ===" > "$SCA_DIR/summary.txt"
                     echo "Build: ${BUILD_NUMBER}" >> "$SCA_DIR/summary.txt"
                     echo "Date: \$(date)" >> "$SCA_DIR/summary.txt"
-                    echo "Scope: ${params.DEPLOY_SCOPE}" >> "$SCA_DIR/summary.txt"
                     echo "Directory Scanned: ${scanDir}" >> "$SCA_DIR/summary.txt"
                     echo "" >> "$SCA_DIR/summary.txt"
                     """
@@ -575,9 +574,7 @@ stage('Generate Delta') {
 }
 
 stage('Check Delta Content') {
-    when {
-        expression { params.DEPLOY_SCOPE == 'DELTA' }
-    }
+
     steps {
         script {
             def pkgExists = fileExists("${DELTA_DIR}/package/package.xml")
@@ -609,22 +606,13 @@ stage('Check Delta Content') {
            Validate Deployment (Dry Run)
            --------------------------------------------------------- */
         stage('Validate Deployment') {
-		when {
-    not {
-        expression { params.DEPLOY_SCOPE == 'DELTA' && env.DELTA_EMPTY == 'true' }
-    }
-}
+
 
             steps {
                 script {
                     def startTime = System.currentTimeMillis()
-					if (params.DEPLOY_SCOPE == 'DELTA' && env.DELTA_EMPTY == 'true') {
-    echo "✅ Skipping validation – no delta changes detected"
-    return
-}
 
 
-                    if (params.DEPLOY_SCOPE == 'DELTA') {
                         sh """
                         rm -rf .sf .sfdx
                         "$SF" project deploy start \
@@ -635,7 +623,6 @@ stage('Check Delta Content') {
                           --wait 60
                         """
                         return
-                    }
 
                     
                     def duration = System.currentTimeMillis() - startTime
@@ -655,7 +642,6 @@ stage('Check Delta Content') {
                         mkdir -p logs
                         echo "❌ Validation Failed" > logs/validation-failure.log
                         echo "Build: ${BUILD_NUMBER}" >> logs/validation-failure.log
-                        echo "Scope: ${params.DEPLOY_SCOPE}" >> logs/validation-failure.log
                         echo "Timestamp: \$(date)" >> logs/validation-failure.log
                         cat logs/validation-failure.log
                         """
@@ -678,7 +664,6 @@ Dry-run validation successful.
 
 Deployment details:
 - Environment : ${params.TARGET_ENV}
-- Scope  : ${params.DEPLOY_SCOPE}
 - Apex-only : ${params.APEX_CLASSES ?: 'No'}
 
 Approve deployment?
@@ -700,7 +685,6 @@ Approve deployment?
                     echo "Build: ${BUILD_NUMBER}"
                     echo "Environment: ${params.TARGET_ENV}"
                     echo "Branch: ${env.GIT_BRANCH}"
-                    echo "Scope: ${params.DEPLOY_SCOPE}"
                     echo "Test Level: ${params.TEST_LEVEL}"
                     echo "Timestamp: ${new Date()}"
 					if (params.DEPLOY_SCOPE == 'DELTA' && env.DELTA_EMPTY == 'true') {
