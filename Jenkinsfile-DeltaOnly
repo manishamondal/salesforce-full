@@ -116,15 +116,13 @@ stage('Verify Git Workspace') {
 stage('Capture Git Commit') {
     steps {
         script {
-            def gitOutput = dir(env.WORKSPACE) {
-                sh(
-                    script: 'git rev-parse HEAD',
-                    returnStdout: true
-                )
-            }?.trim()
+            def gitOutput = bat(
+                script: 'git rev-parse HEAD',
+                returnStdout: true
+            ).trim()
 
             if (!gitOutput) {
-                error "❌ Unable to resolve Git HEAD. Not running inside Git workspace."
+                error "❌ Unable to resolve Git HEAD via bat"
             }
 
             env.GIT_HEAD = gitOutput
