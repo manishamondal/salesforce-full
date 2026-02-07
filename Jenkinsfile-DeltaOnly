@@ -225,8 +225,7 @@ stage('Validate Deployment') {
                 return
             }
 
-            def output = ""
-            def status = sh(
+            def output = sh(
                 script: """
                     set +e
                     "$SF" project deploy start \
@@ -234,23 +233,20 @@ stage('Validate Deployment') {
                       --target-org "$SF_ALIAS" \
                       --test-level "$TEST_LEVEL" \
                       --dry-run \
-                      --wait 60
+                      --wait 60 2>&1
                 """,
-                returnStatus: true
-            )
+                returnStdout: true
+            ).trim()
 
-            if (status != 0) {
-                output = sh(
-                    script: 'cat .sf/deploy.log 2>/dev/null || true',
-                    returnStdout: true
-                )
+            echo output
 
-                if (output.contains("NothingToDeploy")) {
-                    echo "🟡 Nothing to deploy (org already in sync)"
-                    env.DELTA_EMPTY = "true"
-                } else {
-                    error "❌ Validation failed for real reasons"
-                }
+            if (output.contains("NothingToDeploy")) {
+                echo "🟡 Nothing to deploy – org already in sync"
+                env.DELTA_EMPTY = "true"
+            } else if (output.contains("Error")) {
+                error "❌ Validation failed for real reasons"
+            } else {
+                echo "✅ Dry-run validation successful"
             }
         }
     }
