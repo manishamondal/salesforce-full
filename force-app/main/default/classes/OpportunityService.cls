@@ -1,1 +1,1 @@
-public class OpportunityService { public static void run() {} }
+public class OpportunityService { public static String help() { return 'ok now check This one'; } }
