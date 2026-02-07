@@ -218,21 +218,25 @@ stage('Generate Delta') {
         /* =========================================================
            Validate Delta Deployment (Dry Run)
            ========================================================= */
-        stage('Validate Deployment') {
-            when {
-                expression { env.DELTA_EMPTY != 'true' }
+stage('Validate Deployment') {
+    steps {
+        script {
+            if (env.DELTA_EMPTY == 'true') {
+                echo "✅ Skipping validation – no delta changes detected"
+                return
             }
-            steps {
-                sh """
-                    "$SF" project deploy start \
-                      --manifest ${DELTA_DIR}/package/package.xml \
-                      --target-org "$SF_ALIAS" \
-                      --test-level "$TEST_LEVEL" \
-                      --dry-run \
-                      --wait 60
-                """
-            }
+
+            sh """
+                "$SF" project deploy start \
+                  --manifest ${DELTA_DIR}/package/package.xml \
+                  --target-org "$SF_ALIAS" \
+                  --test-level "$TEST_LEVEL" \
+                  --dry-run \
+                  --wait 60
+            """
         }
+    }
+}
 
         /* =========================================================
            Manual Approval (QA only)
@@ -252,20 +256,24 @@ stage('Generate Delta') {
         /* =========================================================
            Deploy Delta
            ========================================================= */
-        stage('Deploy') {
-            when {
-                expression { env.DELTA_EMPTY != 'true' }
+stage('Deploy') {
+    steps {
+        script {
+            if (env.DELTA_EMPTY == 'true') {
+                echo "✅ No-op deployment – nothing to deploy"
+                return
             }
-            steps {
-                sh """
-                    "$SF" project deploy start \
-                      --manifest ${DELTA_DIR}/package/package.xml \
-                      --target-org "$SF_ALIAS" \
-                      --test-level "$TEST_LEVEL" \
-                      --wait 60
-                """
-            }
+
+            sh """
+                "$SF" project deploy start \
+                  --manifest ${DELTA_DIR}/package/package.xml \
+                  --target-org "$SF_ALIAS" \
+                  --test-level "$TEST_LEVEL" \
+                  --wait 60
+            """
         }
+    }
+}
 
         /* =========================================================
            Update Baseline Tag
