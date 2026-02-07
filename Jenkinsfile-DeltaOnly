@@ -221,19 +221,18 @@ stage('Validate Deployment') {
     steps {
         script {
             if (env.DELTA_EMPTY == 'true') {
-                echo "✅ Skipping validation – delta package is empty"
+                echo "Skipping validation – delta empty"
                 return
             }
 
             def output = sh(
                 script: """
-                    set +e
                     "$SF" project deploy start \
                       --manifest ${DELTA_DIR}/package/package.xml \
                       --target-org "$SF_ALIAS" \
                       --test-level "$TEST_LEVEL" \
                       --dry-run \
-                      --wait 60 2>&1
+                      --wait 60 2>&1 || true
                 """,
                 returnStdout: true
             ).trim()
@@ -241,13 +240,16 @@ stage('Validate Deployment') {
             echo output
 
             if (output.contains("NothingToDeploy")) {
-                echo "🟡 Nothing to deploy – org already in sync"
+                echo "Nothing to deploy – treating as success"
                 env.DELTA_EMPTY = "true"
-            } else if (output.contains("Error")) {
-                error "❌ Validation failed for real reasons"
-            } else {
-                echo "✅ Dry-run validation successful"
+                return
             }
+
+            if (output.contains("Error")) {
+                error "Validation failed"
+            }
+
+            echo "Dry-run validation successful"
         }
     }
 }
