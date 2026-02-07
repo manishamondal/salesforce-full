@@ -225,8 +225,10 @@ stage('Validate Deployment') {
                 return
             }
 
+            def output = ""
             def status = sh(
                 script: """
+                    set +e
                     "$SF" project deploy start \
                       --manifest ${DELTA_DIR}/package/package.xml \
                       --target-org "$SF_ALIAS" \
@@ -238,19 +240,13 @@ stage('Validate Deployment') {
             )
 
             if (status != 0) {
-                echo "⚠️ Dry-run returned non-zero exit code. Checking if it's a no-op..."
-
-                def output = sh(
-                    script: """
-                        "$SF" project deploy preview \
-                          --manifest ${DELTA_DIR}/package/package.xml \
-                          --target-org "$SF_ALIAS"
-                    """,
+                output = sh(
+                    script: 'cat .sf/deploy.log 2>/dev/null || true',
                     returnStdout: true
                 )
 
-                if (output.contains("No local changes")) {
-                    echo "🟡 No changes to deploy – treating as SUCCESS"
+                if (output.contains("NothingToDeploy")) {
+                    echo "🟡 Nothing to deploy (org already in sync)"
                     env.DELTA_EMPTY = "true"
                 } else {
                     error "❌ Validation failed for real reasons"
