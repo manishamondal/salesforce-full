@@ -294,10 +294,12 @@ stage('Validate Deployment') {
            Deploy Delta
            ========================================================= */
 stage('Deploy') {
-    when {
-        expression { env.DELTA_EMPTY != 'true' }
-    }
     steps {
+        script {
+            if (env.DELTA_EMPTY == 'true') {
+                echo "Skipping validation – delta empty"
+                return
+            }
         sh """
             "$SF" project deploy start \
               --manifest ${DELTA_DIR}/package/package.xml \
