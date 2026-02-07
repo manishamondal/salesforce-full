@@ -222,7 +222,7 @@ stage('Validate Deployment') {
     steps {
         script {
             if (env.DELTA_EMPTY == 'true') {
-                echo "✅ Skipping validation – no delta changes detected"
+                echo "✅ Skipping validation – delta package is empty"
                 return
             }
 
