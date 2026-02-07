@@ -127,7 +127,10 @@ stage('Capture Git Commit') {
                         script: 'git rev-parse HEAD',
                         returnStdout: true
                     ).trim()
-                    
+                     sh """
+                    mkdir -p logs
+                    echo ${env.GIT_COMMIT_HASH} > logs/git-commit.txt
+                    """
                     echo "Current Git Commit: ${env.GIT_COMMIT_HASH}"
                 }
             }
