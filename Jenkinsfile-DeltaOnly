@@ -193,48 +193,43 @@ stage('Generate Delta') {
         /* =========================================================
            Check Delta Content
            ========================================================= */
-        stage('Check Delta Content') {
-            steps {
-                script {
-                    if (!fileExists("${DELTA_DIR}/package/package.xml")) {
-                        env.DELTA_EMPTY = "true"
-                        echo "No delta detected – skipping deployment"
-                        return
-                    }
+stage('Check Delta Content') {
+    steps {
+        script {
+            def pkg = "${DELTA_DIR}/package/package.xml"
 
-                    def typesCount = sh(
-                        script: "grep -c '<types>' ${DELTA_DIR}/package/package.xml || true",
-                        returnStdout: true
-                    ).trim().toInteger()
+            if (!fileExists(pkg)) {
+                env.DELTA_EMPTY = "true"
+            } else {
+                def typesCount = sh(
+                    script: "grep -c '<types>' ${pkg} || true",
+                    returnStdout: true
+                ).trim().toInteger()
 
-                    if (typesCount == 0) {
-                        env.DELTA_EMPTY = "true"
-                        echo "Delta package empty – nothing to deploy"
-                    }
-                }
+                env.DELTA_EMPTY = (typesCount == 0) ? "true" : "false"
             }
+
+            echo "DELTA_EMPTY = ${env.DELTA_EMPTY}"
         }
+    }
+}
 
         /* =========================================================
            Validate Delta Deployment (Dry Run)
            ========================================================= */
 stage('Validate Deployment') {
+    when {
+        expression { env.DELTA_EMPTY != 'true' }
+    }
     steps {
-        script {
-            if (env.DELTA_EMPTY == 'true') {
-                echo "✅ Skipping validation – delta package is empty"
-                return
-            }
-
-            sh """
-                "$SF" project deploy start \
-                  --manifest ${DELTA_DIR}/package/package.xml \
-                  --target-org "$SF_ALIAS" \
-                  --test-level "$TEST_LEVEL" \
-                  --dry-run \
-                  --wait 60
-            """
-        }
+        sh """
+            "$SF" project deploy start \
+              --manifest ${DELTA_DIR}/package/package.xml \
+              --target-org "$SF_ALIAS" \
+              --test-level "$TEST_LEVEL" \
+              --dry-run \
+              --wait 60
+        """
     }
 }
 
