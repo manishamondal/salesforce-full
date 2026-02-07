@@ -203,7 +203,7 @@ stage('Check Delta Content') {
             }
 
             def typesCount = sh(
-                script: "grep -c '<types>' ${DELTA_DIR}/package/package.xml || echo 0",
+                script: "grep -c '<types>' ${DELTA_DIR}/package/package.xml || true",
                 returnStdout: true
             ).trim().toInteger()
 
@@ -294,21 +294,17 @@ stage('Validate Deployment') {
            Deploy Delta
            ========================================================= */
 stage('Deploy') {
+    when {
+        expression { env.DELTA_EMPTY != 'true' }
+    }
     steps {
-        script {
-            if (env.DELTA_EMPTY == 'true') {
-                echo "⏭️ Skipping deployment – delta empty"
-                return
-            }
-
-            sh """
-                "$SF" project deploy start \
-                  --manifest ${DELTA_DIR}/package/package.xml \
-                  --target-org "$SF_ALIAS" \
-                  --test-level "$TEST_LEVEL" \
-                  --wait 60
-            """
-        }
+        sh """
+            "$SF" project deploy start \
+              --manifest ${DELTA_DIR}/package/package.xml \
+              --target-org "$SF_ALIAS" \
+              --test-level "$TEST_LEVEL" \
+              --wait 60
+        """
     }
 }
 
