@@ -1,4 +1,3 @@
-
 pipeline {
     agent any
 
@@ -74,7 +73,6 @@ pipeline {
         CLEAN_BUILD_STREAK = "0"
         PREVIOUS_BUILD_CLEAN = "false"
         GIT_COMMIT_HASH = ""
-        BASELINE_TAG = 'baseline-last-success'
     }
 
     stages {
@@ -277,7 +275,7 @@ Proceed with rollback?""",
                     echo "🔄 Checking out commit ${targetGitHash}..."
                     sh """
                     git fetch --all
-                    git checkout -f ${targetGitHash}
+                    git checkout ${targetGitHash}
                     git log -1
                     """
                     
@@ -361,13 +359,10 @@ Proceed with rollback?""",
                         env.SF_ALIAS = 'CICD_DevHub'
                         env.SF_USERNAME_CRED = 'sfdx_username'
                         env.SF_CLIENT_ID_CRED = 'sfdx_client_id'
-                        env.SF_JWT_KEY_CRED = 'sfdx_jwt_key'
                     } else if (params.TARGET_ENV == 'QA') {
                         env.SF_ALIAS = 'CICD_QA'
                         env.SF_USERNAME_CRED = 'sfdx_username_qa'
                         env.SF_CLIENT_ID_CRED = 'sfdx_client_id_qa'
-                        env.SF_JWT_KEY_CRED = 'sfdx_jwt_key'
-                        env.SF_JWT_KEY_CRED = 'sfdx_jwt_key_qa'
                     }
 
                     echo """
@@ -386,7 +381,7 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
         stage('Authenticate to Salesforce') {
             steps {
                 withCredentials([
-                  file(credentialsId: "${env.SF_JWT_KEY_CRED}", variable: 'JWT_KEY_FILE'),
+                    file(credentialsId: 'sfdx_jwt_key', variable: 'JWT_KEY_FILE'),
                     string(credentialsId: "${env.SF_CLIENT_ID_CRED}", variable: 'CLIENT_ID'),
                     string(credentialsId: "${env.SF_USERNAME_CRED}", variable: 'SF_USERNAME')
                 ]) {
@@ -550,10 +545,11 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
                     echo "Comparing ${env.BASELINE_TAG} to HEAD..."
                     
                     "${SF}" sgd:source:delta \
-  --from "${env.BASELINE_TAG}" \
-  --to HEAD \
-  --output-dir "${DELTA_DIR}" \
-  --source-dir force-app
+                      --to HEAD \
+                      --from "${env.BASELINE_TAG}" \
+                      --output "${DELTA_DIR}" \
+                      --generate-delta \
+                      --source force-app
                     
                     echo ""
                     echo "Delta package generated in ${DELTA_DIR}"
