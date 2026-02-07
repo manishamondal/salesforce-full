@@ -459,7 +459,7 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
                     echo "=== Static Code Analysis Summary ===" > "$SCA_DIR/summary.txt"
                     echo "Build: ${BUILD_NUMBER}" >> "$SCA_DIR/summary.txt"
                     echo "Date: \$(date)" >> "$SCA_DIR/summary.txt"
-                    echo "Scope: ${params.DEPLOY_SCOPE}" >> "$SCA_DIR/summary.txt"
+                    echo "Scope: ${env.DEPLOY_SCOPE}" >> "$SCA_DIR/summary.txt"
                     echo "Directory Scanned: ${scanDir}" >> "$SCA_DIR/summary.txt"
                     echo "" >> "$SCA_DIR/summary.txt"
                     """
@@ -561,7 +561,7 @@ stage('Generate Delta') {
 
 stage('Check Delta Content') {
     when {
-        expression { params.DEPLOY_SCOPE == 'DELTA' }
+        expression { env.DEPLOY_SCOPE == 'DELTA' }
     }
     steps {
         script {
@@ -596,21 +596,21 @@ stage('Check Delta Content') {
         stage('Validate Deployment') {
 		when {
     not {
-        expression { params.DEPLOY_SCOPE == 'DELTA' && env.DELTA_EMPTY == 'true' }
+        expression { env.DEPLOY_SCOPE == 'DELTA' && env.DELTA_EMPTY == 'true' }
     }
 }
 
             steps {
                 script {
                     def startTime = System.currentTimeMillis()
-					if (params.DEPLOY_SCOPE == 'DELTA' && env.DELTA_EMPTY == 'true') {
+					if (env.DEPLOY_SCOPE == 'DELTA' && env.DELTA_EMPTY == 'true') {
     echo "✅ Skipping validation – no delta changes detected"
     return
 }
 
 
 
-                    if (params.DEPLOY_SCOPE == 'DELTA') {
+                    if (env.DEPLOY_SCOPE == 'DELTA') {
                         sh """
                         rm -rf .sf .sfdx
                         "$SF" project deploy start \
@@ -652,7 +652,7 @@ stage('Check Delta Content') {
                         mkdir -p logs
                         echo "❌ Validation Failed" > logs/validation-failure.log
                         echo "Build: ${BUILD_NUMBER}" >> logs/validation-failure.log
-                        echo "Scope: ${params.DEPLOY_SCOPE}" >> logs/validation-failure.log
+                        echo "Scope: ${env.DEPLOY_SCOPE}" >> logs/validation-failure.log
                         echo "Timestamp: \$(date)" >> logs/validation-failure.log
                         cat logs/validation-failure.log
                         """
@@ -675,7 +675,7 @@ Dry-run validation successful.
 
 Deployment details:
 - Environment : ${params.TARGET_ENV}
-- Scope  : ${params.DEPLOY_SCOPE}
+- Scope  : ${env.DEPLOY_SCOPE}
 
 Approve deployment?
 """,
@@ -696,17 +696,17 @@ Approve deployment?
                     echo "Build: ${BUILD_NUMBER}"
                     echo "Environment: ${params.TARGET_ENV}"
                     echo "Branch: ${env.GIT_BRANCH}"
-                    echo "Scope: ${params.DEPLOY_SCOPE}"
+                    echo "Scope: ${env.DEPLOY_SCOPE}"
                     echo "Test Level: ${params.TEST_LEVEL}"
                     echo "Timestamp: ${new Date()}"
-					if (params.DEPLOY_SCOPE == 'DELTA' && env.DELTA_EMPTY == 'true') {
+					if (env.DEPLOY_SCOPE == 'DELTA' && env.DELTA_EMPTY == 'true') {
     echo "✅ No-op deployment – nothing to deploy"
     return
 }
 
 
 
-                    if (params.DEPLOY_SCOPE == 'DELTA') {
+                    if (env.DEPLOY_SCOPE == 'DELTA') {
                         sh """
                         rm -rf .sf .sfdx
                         "$SF" project deploy start \
@@ -745,7 +745,7 @@ Approve deployment?
                     echo "Build: ${BUILD_NUMBER}" >> logs/deployment-summary.txt
                     echo "Status: SUCCESS" >> logs/deployment-summary.txt
                     echo "Duration: ${duration}ms" >> logs/deployment-summary.txt
-                    echo "Scope: ${params.DEPLOY_SCOPE}" >> logs/deployment-summary.txt
+                    echo "Scope: ${env.DEPLOY_SCOPE}" >> logs/deployment-summary.txt
                     echo "Test Level: ${params.TEST_LEVEL}" >> logs/deployment-summary.txt
                     echo "Timestamp: \$(date)" >> logs/deployment-summary.txt
                     echo "Git Commit: ${env.GIT_COMMIT_HASH}" >> logs/deployment-summary.txt
@@ -771,7 +771,7 @@ Approve deployment?
                         echo "=== Deployment Failure Details ===" > logs/deployment-failure.log
                         echo "Build: ${BUILD_NUMBER}" >> logs/deployment-failure.log
                         echo "Failed Stage: Deploy" >> logs/deployment-failure.log
-                        echo "Scope: ${params.DEPLOY_SCOPE}" >> logs/deployment-failure.log
+                        echo "Scope: ${env.DEPLOY_SCOPE}" >> logs/deployment-failure.log
                         echo "Timestamp: \$(date)" >> logs/deployment-failure.log
                         echo "" >> logs/deployment-failure.log
                         echo "Recommended Actions:" >> logs/deployment-failure.log
@@ -809,7 +809,7 @@ Approve deployment?
                     echo "=== Build Metrics ===" > logs/build-metrics-summary.txt
                     echo "Build Number: ${BUILD_NUMBER}" >> logs/build-metrics-summary.txt
                     echo "Build Date: \$(date)" >> logs/build-metrics-summary.txt
-                    echo "Scope: ${params.DEPLOY_SCOPE}" >> logs/build-metrics-summary.txt
+                    echo "Scope: ${env.DEPLOY_SCOPE}" >> logs/build-metrics-summary.txt
                     echo "" >> logs/build-metrics-summary.txt
                     
                     if [ -f "$BUILD_METRICS" ]; then
@@ -835,7 +835,7 @@ Approve deployment?
             when {
                 expression {
         (currentBuild.result == null || currentBuild.result == 'SUCCESS') &&
-        !(params.DEPLOY_SCOPE == 'DELTA' && env.DELTA_EMPTY == 'true')
+        !(env.DEPLOY_SCOPE == 'DELTA' && env.DELTA_EMPTY == 'true')
     }
 
             }
@@ -891,7 +891,7 @@ Approve deployment?
                 echo "Started: ${new Date(currentBuild.startTimeInMillis)}" >> logs/pipeline-summary.txt
                 echo "" >> logs/pipeline-summary.txt
                 echo "Configuration:" >> logs/pipeline-summary.txt
-                echo "  - Deploy Scope: ${params.DEPLOY_SCOPE}" >> logs/pipeline-summary.txt
+                echo "  - Deploy Scope: ${env.DEPLOY_SCOPE}" >> logs/pipeline-summary.txt
                 echo "  - Test Level: ${params.TEST_LEVEL}" >> logs/pipeline-summary.txt
                 echo "  - Target Org Alias: ${SF_ALIAS}" >> logs/pipeline-summary.txt
 
