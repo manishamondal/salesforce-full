@@ -96,6 +96,16 @@ stage('Checkout') {
     }
 }
 
+stage('Verify Git Workspace') {
+    steps {
+        sh '''
+            set -e
+            test -d .git
+            git rev-parse --is-inside-work-tree
+        '''
+    }
+}
+
 
 
         /* =========================================================
@@ -105,16 +115,21 @@ stage('Capture Git Commit') {
     steps {
         script {
             env.GIT_HEAD = sh(
-                script: 'git rev-parse HEAD',
+                script: '''
+                    set -e
+                    pwd
+                    ls -la
+                    git status
+                    git rev-parse HEAD
+                ''',
                 returnStdout: true
-            ).trim()
+            ).trim().split('\n').last()
 
             if (!env.GIT_HEAD || env.GIT_HEAD == 'null') {
                 error "❌ GIT_HEAD could not be resolved. Git checkout is invalid."
             }
 
             env.GIT_COMMIT_HASH = env.GIT_HEAD
-
             echo "✅ Git HEAD resolved: ${env.GIT_HEAD}"
         }
     }
