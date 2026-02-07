@@ -80,14 +80,11 @@ pipeline {
         /* =========================================================
            Checkout
            ========================================================= */
-stage('Checkout') {
+        stage('Checkout') {
     steps {
         checkout([
             $class: 'GitSCM',
             branches: [[name: "*/${env.GIT_BRANCH}"]],
-            extensions: [
-                [$class: 'CloneOption', shallow: false, depth: 0, noTags: false]
-            ],
             userRemoteConfigs: [[
                 url: 'https://github.com/manishamondal/salesforce-full.git',
                 credentialsId: 'supercred'
@@ -96,41 +93,19 @@ stage('Checkout') {
     }
 }
 
-stage('Verify Git Workspace') {
-    steps {
-        dir(env.WORKSPACE) {
-            sh '''
-                echo "Workspace: $(pwd)"
-                test -d .git || exit 1
-                git status
-            '''
-        }
-    }
-}
 
-
-
-        /* =========================================================
-           Capture Git Commit
-           ========================================================= */
 stage('Capture Git Commit') {
     steps {
-        sh '''
-            rm -f .git_head
-            git rev-parse HEAD > .git_head
-            echo "Git HEAD written to file:"
-            cat .git_head
-        '''
-
         script {
-            env.GIT_HEAD = readFile('.git_head').trim()
-            env.GIT_COMMIT_HASH = env.GIT_HEAD
-        }
+            env.GIT_HEAD = sh(
+                script: 'git rev-parse HEAD',
+                returnStdout: true
+            ).trim()
 
-        echo "📌 Captured Git Commit: ${env.GIT_HEAD}"
+            echo "📌 Captured Git Commit: ${env.GIT_HEAD}"
+        }
     }
 }
-
         /* =========================================================
            Salesforce Authentication (JWT)
            ========================================================= */
