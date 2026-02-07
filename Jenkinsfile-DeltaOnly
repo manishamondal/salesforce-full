@@ -218,18 +218,45 @@ stage('Check Delta Content') {
            Validate Delta Deployment (Dry Run)
            ========================================================= */
 stage('Validate Deployment') {
-    when {
-        expression { env.DELTA_EMPTY != 'true' }
-    }
     steps {
-        sh """
-            "$SF" project deploy start \
-              --manifest ${DELTA_DIR}/package/package.xml \
-              --target-org "$SF_ALIAS" \
-              --test-level "$TEST_LEVEL" \
-              --dry-run \
-              --wait 60
-        """
+        script {
+            if (env.DELTA_EMPTY == 'true') {
+                echo "✅ Skipping validation – delta package is empty"
+                return
+            }
+
+            def status = sh(
+                script: """
+                    "$SF" project deploy start \
+                      --manifest ${DELTA_DIR}/package/package.xml \
+                      --target-org "$SF_ALIAS" \
+                      --test-level "$TEST_LEVEL" \
+                      --dry-run \
+                      --wait 60
+                """,
+                returnStatus: true
+            )
+
+            if (status != 0) {
+                echo "⚠️ Dry-run returned non-zero exit code. Checking if it's a no-op..."
+
+                def output = sh(
+                    script: """
+                        "$SF" project deploy preview \
+                          --manifest ${DELTA_DIR}/package/package.xml \
+                          --target-org "$SF_ALIAS"
+                    """,
+                    returnStdout: true
+                )
+
+                if (output.contains("No local changes")) {
+                    echo "🟡 No changes to deploy – treating as SUCCESS"
+                    env.DELTA_EMPTY = "true"
+                } else {
+                    error "❌ Validation failed for real reasons"
+                }
+            }
+        }
     }
 }
 
