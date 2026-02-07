@@ -3,6 +3,7 @@ pipeline {
 
     options {
         timestamps()
+		skipDefaultCheckout()
     }
 
     parameters {
@@ -73,45 +74,65 @@ pipeline {
         CLEAN_BUILD_STREAK = "0"
         PREVIOUS_BUILD_CLEAN = "false"
         GIT_COMMIT_HASH = ""
-        
-        // Add baseline tag definition
-        BASELINE_TAG    = "baseline-${TARGET_ENV.toLowerCase()}"
     }
 
     stages {
+
+stage('Select Git Branch') {
+    steps {
+        script {
+            def targetEnv = params.TARGET_ENV ?: 'DEV'
+
+            if (targetEnv == 'DEV') {
+                env.GIT_BRANCH   = 'dev'
+                env.BASELINE_TAG = 'dev-baseline'
+                env.SF_ALIAS     = 'DEV'
+            } else if (targetEnv == 'QA') {
+                env.GIT_BRANCH   = 'qa'
+                env.BASELINE_TAG = 'qa-baseline'
+                env.SF_ALIAS     = 'QA'
+            }
+
+            if (!env.GIT_BRANCH?.trim()) {
+                error "❌ GIT_BRANCH not resolved"
+            }
+
+            echo "✅ Git branch selected: ${env.GIT_BRANCH}"
+            echo "✅ Baseline tag: ${env.BASELINE_TAG}"
+        }
+    }
+}
 
         /* ---------------------------------------------------------
            Checkout
            --------------------------------------------------------- */
         stage('Checkout') {
-            steps {
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: '*/main']],
-                    userRemoteConfigs: [[
-                        url: 'https://github.com/manishamondal/salesforce-full.git'
-                    ]]
-                ])
-            }
+    steps {
+        checkout([
+            $class: 'GitSCM',
+            branches: [[name: "*/${env.GIT_BRANCH}"]],
+            userRemoteConfigs: [[
+                url: 'https://github.com/manishamondal/salesforce-full.git',
+                credentialsId: 'supercred'
+            ]]
+        ])
+    }
+}
+
+
+stage('Capture Git Commit') {
+    steps {
+        script {
+            env.GIT_HEAD = sh(
+                script: 'git rev-parse HEAD',
+                returnStdout: true
+            ).trim()
+
+            echo "📌 Captured Git Commit: ${env.GIT_HEAD}"
         }
+    }
+}
 
-        stage('Capture Git Commit') {
-            steps {
-                script {
-                    def commit = sh(
-                        script: "git rev-parse HEAD",
-                        returnStdout: true
-                    ).trim()
-
-                    sh """
-                      mkdir -p logs
-                      echo ${commit} > logs/git-commit.txt
-                    """
-
-                    echo "📌 Captured Git Commit: ${commit}"
-                }
-            }
-        }
 
 
         /* ---------------------------------------------------------
@@ -129,7 +150,7 @@ pipeline {
                         returnStdout: true
                     ).trim()
                     
-                    echo "Current Git Commit: ${env.GIT_COMMIT_HASH}"
+                    echo "Current Git Commit: ${env.GIT_HEAD}"
                 }
             }
         }
@@ -402,6 +423,19 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
         }
 
         /* ---------------------------------------------------------
+           Install Plugins
+         stage('Install Plugins') {
+             steps {
+                 sh '''
+                 echo y | "$SF" plugins install sfdx-git-delta || true
+                 "$SF" plugins install @salesforce/sfdx-scanner || true
+                 '''
+             }
+         }
+           --------------------------------------------------------- */
+
+
+        /* ---------------------------------------------------------
            Static Code Analysis (ALL Deployments)
            --------------------------------------------------------- */
         stage('Static Code Analysis') {
@@ -515,84 +549,85 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
                 }
             }
         }
+				
 
         /* ---------------------------------------------------------
            Generate Delta Package (if DELTA scope)
            --------------------------------------------------------- */
-        stage('Generate Delta') {
-            when {
-                expression { params.DEPLOY_SCOPE == 'DELTA' }
+stage('Generate Delta') {
+    steps {
+        script {
+            echo "=== Generating Delta Package ==="
+            echo "Baseline Tag: ${env.BASELINE_TAG}"
+            echo "Current HEAD: ${env.GIT_HEAD}"
+
+            if (!env.GIT_HEAD?.trim()) {
+                error "❌ GIT_HEAD is null — cannot generate delta"
             }
-            steps {
-                script {
-                    echo "=== Generating Delta Package ==="
-                    echo "Baseline Tag: ${env.BASELINE_TAG}"
-                    echo "Current HEAD: ${env.GIT_COMMIT_HASH}"
-                    
-                    // Check if baseline tag exists, if not create it
-                    def tagExists = sh(
-                        script: "git tag -l '${env.BASELINE_TAG}'",
-                        returnStdout: true
-                    ).trim()
-                    
-                    if (!tagExists) {
-                        echo "⚠️  Baseline tag '${env.BASELINE_TAG}' does not exist."
-                        echo "Creating baseline tag at current HEAD for future delta deployments..."
-                        sh """
-                        git tag -a "${env.BASELINE_TAG}" -m "Initial baseline tag created by Jenkins Build #${BUILD_NUMBER}"
-                        """
-                        echo "✅ Baseline tag created. This build will proceed as FULL deployment."
-                        echo "Future DELTA deployments will compare against this baseline."
-                        
-                        // Skip delta generation for first run
-                        env.SKIP_DELTA = "true"
-                        return
-                    }
-                    
-                    sh """
-                    mkdir -p "${DELTA_DIR}"
-                    
-                    # Generate delta using sfdx-git-delta
-                    echo "Comparing ${env.BASELINE_TAG} to HEAD..."
-                    
-                    "${SF}" sgd:source:delta \
-                      --to HEAD \
-                      --from "${env.BASELINE_TAG}" \
-                      --output-dir "${DELTA_DIR}" \
-                      --generate-delta \
-                      --source-dir force-app
-                    
-                    echo ""
-                    echo "Delta package generated in ${DELTA_DIR}"
-                    echo "Contents:"
-                    ls -la "${DELTA_DIR}" || true
-                    
-                    # Check if there are changes
-                    if [ -f "${DELTA_DIR}/package/package.xml" ]; then
-                        echo ""
-                        echo "Changes detected:"
-                        cat "${DELTA_DIR}/package/package.xml"
-                    else
-                        echo "⚠️  No changes detected between ${env.BASELINE_TAG} and HEAD"
-                        echo "Consider using FULL deployment or check if baseline tag is current"
-                    fi
-                    """
-                }
+
+            sh """
+                mkdir -p delta
+                echo "Comparing ${BASELINE_TAG} to ${GIT_HEAD}..."
+                '/c/Program Files/sf/bin/sf' sgd:source:delta \
+                    --to ${GIT_HEAD} \
+                    --from ${BASELINE_TAG} \
+                    -o delta \
+                    --generate-delta \
+                    -s force-app
+            """
+        }
+    }
+}
+
+stage('Check Delta Content') {
+    when {
+        expression { params.DEPLOY_SCOPE == 'DELTA' }
+    }
+    steps {
+        script {
+            def pkgExists = fileExists("${DELTA_DIR}/package/package.xml")
+
+            if (!pkgExists) {
+                echo "ℹ️ No delta package generated"
+                env.DELTA_EMPTY = "true"
+                return
             }
-            post {
-                always {
-                    archiveArtifacts artifacts: "${DELTA_DIR}/**/*", allowEmptyArchive: true
-                }
+
+            def pkgSize = sh(
+                script: "grep -c '<types>' ${DELTA_DIR}/package/package.xml || true",
+                returnStdout: true
+            ).trim().toInteger()
+
+            if (pkgSize == 0) {
+                echo "ℹ️ Delta package is empty – nothing to deploy"
+                env.DELTA_EMPTY = "true"
+            } else {
+                env.DELTA_EMPTY = "false"
+                echo "✅ Delta contains deployable components"
             }
         }
+    }
+}
+
 
         /* ---------------------------------------------------------
            Validate Deployment (Dry Run)
            --------------------------------------------------------- */
         stage('Validate Deployment') {
+		when {
+    not {
+        expression { params.DEPLOY_SCOPE == 'DELTA' && env.DELTA_EMPTY == 'true' }
+    }
+}
+
             steps {
                 script {
                     def startTime = System.currentTimeMillis()
+					if (params.DEPLOY_SCOPE == 'DELTA' && env.DELTA_EMPTY == 'true') {
+    echo "✅ Skipping validation – no delta changes detected"
+    return
+}
+
 
                     if (params.APEX_CLASSES.trim()) {
                         def classPaths = params.APEX_CLASSES
@@ -613,7 +648,7 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
                         return
                     }
 
-                    if (params.DEPLOY_SCOPE == 'DELTA' && env.SKIP_DELTA != 'true') {
+                    if (params.DEPLOY_SCOPE == 'DELTA') {
                         sh """
                         rm -rf .sf .sfdx
                         "$SF" project deploy start \
@@ -639,7 +674,7 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
                         return
                     }
 
-                    // FULL deployment only (or first DELTA run)
+                    // FULL deployment only
                     sh """
                     rm -rf .sf .sfdx
                     "$SF" project deploy start \
@@ -678,15 +713,19 @@ Client Cred : ${env.SF_CLIENT_ID_CRED}
         }
 
         /* ---------------------------------------------------------
-           Manual Approval
+           Manual Approval (skipped for DEV)
            --------------------------------------------------------- */
         stage('Approve Deployment') {
+            when {
+                expression { params.TARGET_ENV != 'DEV' }
+            }
             steps {
                 timeout(time: 30, unit: 'MINUTES') {
                     input message: """
 Dry-run validation successful.
 
 Deployment details:
+- Environment : ${params.TARGET_ENV}
 - Format : ${params.DEPLOY_FORMAT}
 - Scope  : ${params.DEPLOY_SCOPE}
 - Apex-only : ${params.APEX_CLASSES ?: 'No'}
@@ -714,6 +753,11 @@ Approve deployment?
                     echo "Scope: ${params.DEPLOY_SCOPE}"
                     echo "Test Level: ${params.TEST_LEVEL}"
                     echo "Timestamp: ${new Date()}"
+					if (params.DEPLOY_SCOPE == 'DELTA' && env.DELTA_EMPTY == 'true') {
+    echo "✅ No-op deployment – nothing to deploy"
+    return
+}
+
 
                     if (params.APEX_CLASSES.trim()) {
                         def classPaths = params.APEX_CLASSES
@@ -733,7 +777,7 @@ Approve deployment?
                         return
                     }
 
-                    if (params.DEPLOY_SCOPE == 'DELTA' && env.SKIP_DELTA != 'true') {
+                    if (params.DEPLOY_SCOPE == 'DELTA') {
                         sh """
                         rm -rf .sf .sfdx
                         "$SF" project deploy start \
@@ -760,7 +804,7 @@ Approve deployment?
                         return
                     }
 
-                    // FULL deployment only (or first DELTA run)
+                    // FULL deployment only
                     sh """
                     rm -rf .sf .sfdx
                     "$SF" project deploy start \
@@ -874,7 +918,11 @@ Approve deployment?
            --------------------------------------------------------- */
         stage('Update Baseline Tag') {
             when {
-                expression { currentBuild.result == null || currentBuild.result == 'SUCCESS' }
+                expression {
+        (currentBuild.result == null || currentBuild.result == 'SUCCESS') &&
+        !(params.DEPLOY_SCOPE == 'DELTA' && env.DELTA_EMPTY == 'true')
+    }
+
             }
             steps {
                 script {
